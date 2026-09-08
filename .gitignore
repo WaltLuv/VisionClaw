@@ -10,3 +10,15 @@ samples/CameraAccessAndroid/local.properties
 
 # Machine-local symlinks to the DAT SDK skills (absolute paths, not portable)
 .claude/skills/
+
+# Phone-first application
+**/node_modules/
+**/.env
+**/.env.*
+!**/.env.example
+**/data/
+web/dist/
+**/.venv/
+**/__pycache__/
+**/*.sqlite*
+**/test-results/
