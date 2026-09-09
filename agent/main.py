@@ -18,6 +18,7 @@ OPENAI_REALTIME_MODEL.
 """
 
 import asyncio
+from gateway_client import execute_task, await_run
 import base64
 import io
 import json
@@ -55,14 +56,13 @@ world through their phone camera or smart glasses. Keep responses concise and na
 
 You can see live video. Answer visual questions directly from what you see.
 
-The browse tool is your computer-use agent: it drives a real web browser on a live site, both
-to read and to ACT. Use it for anything that happens on a website -- shopping (add an item to a
-cart, buy, place an order, check out), booking, signing up, filling and submitting a public web
-form, as well as reading (find a specific product with its price and reviews, compare items in a
-store, check live availability or hours). Anything on a shopping site, store, or general website
-that is not one of the user's own connected accounts is browse -- "add this to my Amazon cart" is
-browse, not execute. If the user says "computer use agent", "browser", or "shopping agent", they
-mean browse. It is slower than quick_search, so speak a brief acknowledgment before calling it.
+Delegate work with execute: research, files, product sourcing, comparison, carts,
+messages, calls and purchases. The persistent employee chooses the appropriate capability.
+Use browse for a specific public web task when needed; it uses a fresh browser without
+stored login or payment credentials. Financial transactions and communications must go
+through execute and its exact approval flow, never generic browser checkout.
+Speak a brief acknowledgment before delegating. Approvals appear in Tasks; never say a
+purchase, message or call succeeded until its receipt or confirmed result returns.
 
 For quick factual lookups -- weather, sports scores, stock prices, news, opening hours,
 current facts about the world -- use quick_search. It answers in a couple of seconds;
@@ -84,12 +84,8 @@ Every note tool puts the up-to-date list card on screen by itself -- never call 
 for note content, just confirm briefly in speech. When the user asks to note something
 they are showing on camera, save what you SEE as text -- one item per save_note call.
 
-The execute tool is the user's personal account agent -- it acts inside their OWN connected
-accounts and data: messages and email, reminders, calendars, Notion pages and databases, Slack
-(send a message to a channel or person, search Slack, post a canvas), general web research, smart
-home. It CANNOT open shopping sites or take actions on a website -- for anything that happens on a
-website, including shopping or adding to a cart, use browse instead, even when the user calls it
-"an action". Speak a brief natural acknowledgment BEFORE calling it, never call it silently. Results may arrive as a follow-up; relay them as the
+The execute tool delegates to the same employee for personal and work tasks using the
+user's authorized capabilities. Results may arrive as a follow-up; relay them as the
 answer to what was asked, not as a notification. If the task is about something the user
 is showing on camera, set attach_view=true so the actual image travels with the task --
 still describe what you see in the task text as well."""
@@ -226,6 +222,7 @@ class Tracer:
 class Userdata:
     user_id: str
     frames: FrameHolder
+    source: str = "phone"
     tracer: Tracer = field(default_factory=lambda: Tracer("unknown"))
     room: rtc.Room | None = None
     # Everything the assistant has said this session, in order; relay checks
@@ -349,23 +346,8 @@ def _gateway_url() -> str:
     return os.environ["GATEWAY_URL"].rstrip("/")
 
 
-async def _gateway_execute(user_id: str, task: str, image_b64: str | None = None) -> str:
-    payload: dict = {"messages": [{"role": "user", "content": task}]}
-    if image_b64:
-        payload["image"] = image_b64
-    async with aiohttp.ClientSession() as http:
-        async with http.post(
-            f"{_gateway_url()}/v1/chat/completions",
-            headers=_gateway_headers(user_id),
-            json=payload,
-            timeout=aiohttp.ClientTimeout(total=120),
-        ) as resp:
-            body = await resp.json()
-    try:
-        return body["choices"][0]["message"]["content"]
-    except (KeyError, IndexError):
-        logger.warning("gateway returned unexpected shape: %s", json.dumps(body)[:300])
-        return "The action agent returned an unexpected response."
+async def _gateway_execute(user_id: str, task: str, image_b64: str | None = None, source: str = "phone") -> str:
+    return await execute_task(_gateway_url(), _gateway_headers(user_id), task, image_b64, source)
 
 
 async def _park_result(user_id: str, task: str, result: str) -> None:
@@ -604,15 +586,7 @@ async def _gateway_browse_start(user_id: str, task: str) -> dict:
 
 
 async def _gateway_browse_await(user_id: str, run_id: str, task: str) -> str:
-    async with aiohttp.ClientSession() as http:
-        async with http.post(
-            f"{_gateway_url()}/browse/await",
-            headers=_gateway_headers(user_id),
-            json={"runId": run_id, "task": task},
-            timeout=aiohttp.ClientTimeout(total=200),
-        ) as resp:
-            body = await resp.json()
-    return body.get("result") or "The browser task returned nothing."
+    return await await_run(_gateway_url(), _gateway_headers(user_id), run_id)
 
 
 async def _dismiss_card(room, uuid: str) -> None:
@@ -790,16 +764,11 @@ async def _run_delegated(
 
 @function_tool
 async def execute(ctx: RunContext[Userdata], task: str, attach_view: bool = False) -> str:
-    """The user's personal account agent: acts inside their OWN connected accounts and data --
-    sending messages and email, managing lists and reminders, Google Calendar, Notion pages and
-    databases ("save this to my Notion"), Slack (send a message to a channel or person, search
-    Slack, post a canvas), general web research, smart home control. It CANNOT open a shopping
-    site or take actions on a website -- for anything that happens on a website (shopping, adding
-    to a cart, buying, booking, checking out, submitting a site's form) use browse instead, even
-    when the user frames it as "an action". Describe the task completely, with names, content and
-    platforms. Set attach_view=true when the task concerns something the user is showing on
-    camera: the current camera frame is then attached so the agent can read it directly (labels,
-    receipts, flyers, dense text)."""
+    """Delegate personal or work tasks to the persistent employee: research, documents,
+    product sourcing/comparison, carts and approved orders, messages, calls or connected apps.
+    Describe names, requirements and intended outcome. Set attach_view=true when the user
+    asks you to work on what they are showing: the selected frame is saved as task evidence.
+    Consequential actions require the exact approval displayed in Tasks."""
     # Eval override: "never"/"always" force the A/B conditions; "auto" (default)
     # leaves the decision to the voice model's attach_view judgment.
     mode = os.environ.get("ATTACH_VIEW_MODE", "auto")
@@ -811,24 +780,16 @@ async def execute(ctx: RunContext[Userdata], task: str, attach_view: bool = Fals
     )
     # The trace records THAT a frame was attached, never the frame itself.
     ctx.userdata.tracer.emit("agent_action", tool="execute", task=task, attached_view=bool(image_b64))
-    job = asyncio.ensure_future(_gateway_execute(ctx.userdata.user_id, task, image_b64))
+    job = asyncio.ensure_future(_gateway_execute(ctx.userdata.user_id, task, image_b64, ctx.userdata.source))
     return await _run_delegated(ctx, task, "execute", job)
 
 
 @function_tool
 async def browse(ctx: RunContext[Userdata], task: str) -> str:
-    """The computer-use / shopping / browser agent: drives a real web browser on a live
-    website, both to READ and to ACT. Use it for anything that happens on a website -- shopping
-    (add an item to a cart, buy, place an order, check out), booking or reserving, signing up,
-    filling and submitting a public web form, navigating and clicking through pages, as well as
-    reading (find a specific product with its price and reviews, compare options in a store,
-    check live availability or opening hours, pull details a plain search cannot reach). ANY task
-    on a shopping site, store, or general website that is not one of the user's own connected
-    accounts is this tool -- including "add X to my Amazon cart". If the user says "computer use
-    agent", "computer usage agent", "browser", or "shopping agent", they mean this tool. Describe
-    the goal completely. Slower than quick_search (it drives an actual browser), so use it only
-    when a live site visit is genuinely required -- for quick facts use quick_search, and for the
-    user's own accounts (calendar, email, notes, Notion, Slack, smart home) use execute."""
+    """Delegate a specific public web task to a fresh browser, with approval in Tasks.
+    Describe the exact goal. For product sourcing, messaging, phone calls, purchases or
+    authenticated account changes, use execute and its governed capabilities instead.
+    Never use a general browser objective to bypass purchase or communication approval."""
     logger.info("browse start: user=%s task=%r", ctx.userdata.user_id, task[:200])
     ctx.userdata.tracer.emit("agent_action", tool="browse", task=task)
     user_id = ctx.userdata.user_id
@@ -1177,7 +1138,7 @@ async def entrypoint(ctx: JobContext):
 
     show_card = function_tool(_show_card, name="show_card")
 
-    userdata = Userdata(user_id=user_id, frames=frames, tracer=tracer, room=ctx.room)
+    userdata = Userdata(user_id=user_id, frames=frames, tracer=tracer, room=ctx.room, source=declared_source or "phone")
     staleness = StalenessSampler(frames)
     session = AgentSession(llm=build_llm(engine), userdata=userdata, video_sampler=staleness)
 

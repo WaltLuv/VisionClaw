@@ -34,14 +34,17 @@ export interface BrowseStart {
  * (a few seconds), so the caller can show it while the task runs. record:true
  * means a replay mp4 is retrievable afterward. maxCostUsd bounds spend.
  */
-export async function startBrowse(task: string): Promise<BrowseStart> {
+export async function startBrowse(task: string, onCreated?:(id:string)=>void, signal?:AbortSignal): Promise<BrowseStart> {
+  signal?.throwIfAborted();
   const cap = Number(process.env.BROWSER_USE_MAX_COST_USD ?? 0.75);
   const model = process.env.BROWSER_USE_MODEL; // omit -> Browser Use default (cheapest/fastest)
   const create = await fetch(`${BASE}/runs`, {
     method: "POST",
+    signal:signal??AbortSignal.timeout(30000),
     headers: buHeaders(),
     body: JSON.stringify({
       task,
+      agentmail:false,
       ...(model ? { model } : {}),
       maxCostUsd: cap,
       // Desktop viewport sized to roughly match the card's aspect so the remote
@@ -58,10 +61,11 @@ export async function startBrowse(task: string): Promise<BrowseStart> {
     }),
   });
   if (!create.ok) {
-    throw new Error(`browse create ${create.status}: ${(await create.text()).slice(0, 200)}`);
+    throw new Error(`Browser service returned HTTP ${create.status}`);
   }
   const created = (await create.json()) as { id: string };
   const runId = created.id;
+  onCreated?.(runId);
 
   // The embeddable live-view URL for an agent run lives in the RUN EVENT STREAM
   // (browser.ready / browser.attached -> data.live_view_url), not on the run or
@@ -69,6 +73,7 @@ export async function startBrowse(task: string): Promise<BrowseStart> {
   // give up and run without a live card.
   let liveUrl: string | null = null;
   for (let i = 0; i < 8 && !liveUrl; i++) {
+    signal?.throwIfAborted();
     await sleep(1500);
     try {
       const ev = await fetch(`${BASE}/runs/${runId}/events`, { headers: buHeaders() });
@@ -140,7 +145,7 @@ export async function fetchRunDetail(runId: string): Promise<BrowseDetail> {
         const part = e.data?.part;
         if (!part) continue;
         if (part.type === "text" && part.text?.trim()) {
-          steps.push(`plan: ${part.text.trim().slice(0, 110)}`);
+          // Private agent narration is deliberately excluded from operational evidence.
         } else if (part.type === "tool" && part.tool) {
           stepCount += 1;
           steps.push(`action: ${part.tool}`);

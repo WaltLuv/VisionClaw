@@ -14,6 +14,12 @@ def emit(value):
 def main():
     request = json.loads(sys.stdin.readline())
     with contextlib.redirect_stdout(sys.stderr):
+        # This is an application-owned, per-user Hermes home. Keep all other
+        # provider/auth settings intact while exposing only explicit gateway tools.
+        from hermes_cli.config import load_config, save_config
+        config = load_config()
+        config.setdefault('tools', {})['tool_search'] = {'enabled': 'off'}
+        save_config(config)
         from run_agent import AIAgent
         from tools.registry import registry
         for definition in request['tools']:
@@ -47,6 +53,6 @@ def main():
 if __name__ == '__main__':
     try:
         main()
-    except Exception:
-        emit({'type': 'error', 'message': 'Hermes could not complete this task. Check runtime and provider authentication.'})
+    except Exception as error:
+        emit({'type': 'error', 'code': type(error).__name__, 'message': 'Hermes could not complete this task. Check runtime and provider authentication.'})
         sys.exit(1)

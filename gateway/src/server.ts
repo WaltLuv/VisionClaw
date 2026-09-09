@@ -1,3 +1,9 @@
+import helmet from "helmet";
+import {fileURLToPath} from "node:url";
+import {installEmployee} from "./employee/routes.js";
+import {installLegacyTasks} from "./employee/legacy.js";
+import {registerCommunicationWebhooks} from "./employee/communications.js";
+import {tokenHash} from "./employee/auth.js";
 import { createServer } from "node:http";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
@@ -27,7 +33,7 @@ function browseDetailFields(d?: BrowseDetail): Record<string, unknown> {
   };
 }
 import { registerConnectRoutes } from "./connect.js";
-import { approvedAccountIds, initAuth, lookupToken, registerAuthRoutes, touchLastSeen } from "./auth.js";
+import { approvedAccountIds, initAuth, lookupToken, lookupTokenHash, registerAuthRoutes, touchLastSeen } from "./auth.js";
 
 initStore(config.storePath);
 // Sign-in accounts resolve tokens synchronously from an in-memory index, so
@@ -36,7 +42,8 @@ await initAuth();
 
 const app = express();
 // 5mb: task requests may carry a base64 camera frame (~200-400KB typical).
-app.use(express.json({ limit: "5mb" }));
+app.use(helmet({contentSecurityPolicy:false}));
+app.use(express.json({limit:"5mb",verify:(req,_res,bytes)=>{if(req.url?.startsWith("/webhooks/voice"))(req as any).rawBody=bytes;}}));
 
 /**
  * What the voice model receives the instant a task is spawned.
@@ -98,12 +105,13 @@ function userFromRequest(req: express.Request, explicitToken?: string): string |
   let token = explicitToken?.trim();
   if (!token) {
     const header = req.header("authorization");
-    if (!header?.startsWith("Bearer ")) return null;
+    if (!header?.startsWith("Bearer ")) return employee.cookieUser(req);
     token = header.slice("Bearer ".length).trim();
   }
   // The agent worker authenticates users upstream (LiveKit room identity), so
   // it holds one service credential and names the user per request.
   if (config.serviceToken && token === config.serviceToken) {
+    if(explicitToken)return null;
     const impersonated = req.header("x-user-id")?.trim();
     return impersonated || null;
   }
@@ -121,6 +129,12 @@ function userFromRequest(req: express.Request, explicitToken?: string): string |
 
 // ---------- app connections (OAuth -> vault) ----------
 
+const validGrant=(owner:string,hash:string)=>[...config.tokens].some(([t,u])=>u===owner&&tokenHash(t)===hash)||(lookupTokenHash(hash)?.userId===owner&&lookupTokenHash(hash)?.status==='approved');
+const employee=installEmployee(app,userFromRequest,validGrant);
+installLegacyTasks(app,employee,userFromRequest);
+registerCommunicationWebhooks(app,employee.db,(owner,task,key,conversationId)=>{employee.q.create(owner,{task,context:{source:'webhook',conversationId}},key);void employee.q.tick();});
+app.use((req,res,next)=>{if(req.path==='/'||req.path.startsWith('/assets/'))res.set('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; media-src 'self' blob:; connect-src 'self' wss:; frame-src https:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'");next();});
+app.use(express.static(fileURLToPath(new URL('../../web/dist/',import.meta.url))));
 registerConnectRoutes(app, userFromRequest);
 registerAuthRoutes(app);
 
@@ -135,277 +149,7 @@ app.get("/health", (_req, res) => {
   res.status(200).json({ ok: true });
 });
 
-// The app's delegateTask() posts OpenAI-style chat completions here.
-app.post("/v1/chat/completions", async (req, res) => {
-  const userId = userFromRequest(req);
-  if (!userId) {
-    res.status(401).json({ error: { message: "invalid or missing gateway token" } });
-    return;
-  }
-
-  const messages = (req.body?.messages ?? []) as Array<{ role: string; content: string }>;
-  const lastUser = [...messages].reverse().find((m) => m.role === "user")?.content?.trim();
-  if (!lastUser) {
-    res.status(400).json({ error: { message: "no user message found" } });
-    return;
-  }
-
-  // ---- streaming path (OpenAI-style SSE chunks) ----
-  if (req.body?.stream === true) {
-    let sessionId: string;
-    try {
-      ({ sessionId } = await ensureUser(userId));
-      await markSessionUsed(userId);
-    } catch (err) {
-      console.error("[chat] provisioning failed:", err);
-      res.status(502).json({ error: { message: "agent backend error" } });
-      return;
-    }
-
-    res.setHeader("Content-Type", "text/event-stream");
-    res.setHeader("Cache-Control", "no-cache");
-    res.setHeader("Connection", "keep-alive");
-    res.flushHeaders();
-
-    const id = `chatcmpl-${randomUUID()}`;
-    const created = Math.floor(Date.now() / 1000);
-    const chunk = (delta: object, finish: string | null = null) =>
-      `data: ${JSON.stringify({
-        id,
-        object: "chat.completion.chunk",
-        created,
-        model: "visionclaw-cloud",
-        choices: [{ index: 0, delta, finish_reason: finish }],
-      })}\n\n`;
-    res.write(chunk({ role: "assistant" }));
-
-    let clientDone = false;
-    const finishClient = (ackText?: string) => {
-      if (clientDone) return;
-      clientDone = true;
-      if (ackText) res.write(chunk({ content: ackText }));
-      res.write(chunk({}, "stop"));
-      res.write("data: [DONE]\n\n");
-      res.end();
-    };
-    res.on("close", () => {
-      clientDone = true;
-    });
-
-    // In spawn mode the request never carries the result: acknowledge now, keep
-    // draining, and deliver the answer over the WebSocket when it lands. The ack
-    // is an instruction rather than a line to read out, so the cover comes back
-    // in the assistant's own voice instead of a canned status message.
-    if (config.spawnMode) finishClient(SPAWN_ACK);
-
-    // Otherwise race the agent against the budget; past it, same deferral.
-    const capTimer = config.spawnMode
-      ? null
-      : setTimeout(
-          () => finishClient("\n\nI'm still working on that. I'll let you know the moment it's done."),
-          config.quickAnswerTimeoutMs,
-        );
-
-    try {
-      const wasCappedBeforeFinal = () => clientDone;
-      const finalText = await runTurnStreaming(sessionId, lastUser, drainContext(userId), (text) => {
-        if (!clientDone) res.write(chunk({ content: text }));
-      });
-      if (capTimer) clearTimeout(capTimer);
-      if (finalText) void recordTask(userId, lastUser, finalText);
-      if (wasCappedBeforeFinal()) {
-        if (finalText && !notifyUser(userId, finalText)) {
-          console.warn(`[turn] late streamed result for ${userId} parked for next call`);
-          void queuePending(userId, finalText);
-        }
-      } else {
-        finishClient();
-      }
-    } catch (err) {
-      if (capTimer) clearTimeout(capTimer);
-      console.error("[chat] streaming turn failed:", err);
-      finishClient("Something went wrong while working on that. Try again in a moment.");
-    }
-    return;
-  }
-
-  try {
-    const { sessionId } = await ensureUser(userId);
-    await markSessionUsed(userId);
-    // The agent worker (service token) blocks on its own tool timeout and
-    // relays the finished answer into the voice session -- handing IT the
-    // spawn-mode acknowledgement would make the assistant read a status
-    // message aloud. Spawn semantics are for the app's own HTTP calls.
-    const bearer = req.header("authorization")?.slice("Bearer ".length).trim();
-    const isServiceCall = !!config.serviceToken && bearer === config.serviceToken;
-    // What the user is looking at, when the voice layer judged it relevant.
-    const image = typeof req.body?.image === "string" && req.body.image ? req.body.image : undefined;
-    // The worker's job process dies with the call. If that happens while this
-    // request is still running, the finished answer would be written to a dead
-    // socket -- observed live: a 25s research task lost outright. Track it so
-    // the result can be parked for the next call instead.
-    let clientGone = false;
-    res.on("close", () => {
-      if (!res.writableFinished) clientGone = true;
-    });
-    // The session owns durable history; only the newest user turn is sent.
-    // What the subagent did, for the study trace: tool calls (name, server,
-    // ok, ms), chain depth, stop reason. Text only, args/results clipped.
-    const traceSubagent = (stats: TurnStats | undefined, outcome: string, resultText: string) => {
-      if (!stats) return;
-      appendTrace(userId, [
-        {
-          type: "subagent_turn",
-          task: lastUser.slice(0, 200),
-          outcome,
-          tool_count: stats.tools.length,
-          tools: stats.tools,
-          thinking: stats.thinking,
-          messages: stats.messages,
-          stop_reason: stats.stop_reason,
-          duration_ms: stats.duration_ms,
-          result_chars: resultText.length,
-          errors: stats.tools.filter((t) => t.ok === false).length,
-        },
-      ]);
-    };
-    const result = await runTurn(
-      sessionId,
-      lastUser,
-      isServiceCall ? 110_000 : config.spawnMode ? 0 : config.quickAnswerTimeoutMs,
-      (lateText, stats) => {
-        traceSubagent(stats, "late", lateText);
-        void recordTask(userId, lastUser, lateText);
-        const delivered = notifyUser(userId, lateText);
-        if (!delivered) {
-          console.warn(`[turn] late result for ${userId} parked for next call`);
-          void queuePending(userId, lateText);
-        }
-      },
-      drainContext(userId),
-      image,
-    );
-
-    if (!result.deferred && result.text) void recordTask(userId, lastUser, result.text);
-    if (!result.deferred) traceSubagent(result.stats, clientGone ? "caller_gone" : "quick", result.text ?? "");
-    if (!result.deferred && result.text && clientGone) {
-      console.warn(`[turn] caller gone before completion; parking result for ${userId}`);
-      // Same wrapper the worker uses when it parks, so the next call's relay
-      // instruction reads identically.
-      void queuePending(
-        userId,
-        `A task from an earlier call finished. Task: ${lastUser.slice(0, 200)}\nResult: ${result.text}`,
-      );
-      return;
-    }
-    const content = result.deferred
-      ? config.spawnMode
-        ? SPAWN_ACK
-        : "I'm still working on that. I'll let you know the moment it's done."
-      : (result.text ?? "Done.");
-
-    res.json({
-      id: `chatcmpl-${randomUUID()}`,
-      object: "chat.completion",
-      created: Math.floor(Date.now() / 1000),
-      model: "visionclaw-cloud",
-      choices: [
-        {
-          index: 0,
-          message: { role: "assistant", content },
-          finish_reason: "stop",
-        },
-      ],
-    });
-  } catch (err) {
-    console.error("[chat] turn failed:", err);
-    res.status(502).json({ error: { message: "agent backend error" } });
-  }
-});
-
-// Live web browsing via Browser Use Cloud. Split into start + await so the
-// voice worker can show a live-view card the moment the browser is up (only the
-// worker holds the LiveKit room), then keep waiting for the result.
-app.post("/browse/start", async (req, res) => {
-  const userId = userFromRequest(req);
-  if (!userId) {
-    res.status(401).json({ error: { message: "invalid or missing gateway token" } });
-    return;
-  }
-  if (!browseEnabled()) {
-    res.status(503).json({ error: { message: "browser tasks are not enabled on this gateway" } });
-    return;
-  }
-  const task = String(req.body?.task ?? "").trim();
-  if (!task) {
-    res.status(400).json({ error: { message: "task is required" } });
-    return;
-  }
-  try {
-    const { runId, liveUrl } = await startBrowse(task);
-    res.json({ runId, liveUrl });
-  } catch (err) {
-    console.error("[browse] start failed:", err);
-    res.status(502).json({ error: { message: "browser backend error" } });
-  }
-});
-
-app.post("/browse/await", async (req, res) => {
-  const userId = userFromRequest(req);
-  if (!userId) {
-    res.status(401).json({ error: { message: "invalid or missing gateway token" } });
-    return;
-  }
-  const runId = String(req.body?.runId ?? "").trim();
-  const task = String(req.body?.task ?? "").trim();
-  if (!runId) {
-    res.status(400).json({ error: { message: "runId is required" } });
-    return;
-  }
-  const wrap = (t: string) => `A task from an earlier call finished. Task: ${task.slice(0, 200)}\nResult: ${t}`;
-  let clientGone = false;
-  res.on("close", () => {
-    if (!res.writableFinished) clientGone = true;
-  });
-  try {
-    const outcome = await awaitBrowse(runId, 170_000, (lateText, meta) => {
-      appendTrace(userId, [
-        {
-          type: "browser_task",
-          task: task.slice(0, 200),
-          outcome: "late",
-          run_id: meta.runId,
-          cost_usd: meta.cost,
-          ...browseDetailFields(meta.detail),
-        },
-      ]);
-      void recordTask(userId, task, lateText);
-      if (!notifyUser(userId, wrap(lateText))) void queuePending(userId, wrap(lateText));
-    });
-    if (!outcome.deferred) {
-      appendTrace(userId, [
-        {
-          type: "browser_task",
-          task: task.slice(0, 200),
-          outcome: clientGone ? "caller_gone" : "quick",
-          run_id: outcome.runId,
-          cost_usd: outcome.cost,
-          ...browseDetailFields(outcome.detail),
-        },
-      ]);
-      if (outcome.text) void recordTask(userId, task, outcome.text);
-      if (outcome.text && clientGone) {
-        void queuePending(userId, wrap(outcome.text));
-        res.json({ result: SPAWN_ACK });
-        return;
-      }
-    }
-    res.json({ result: outcome.deferred ? SPAWN_ACK : (outcome.text ?? "Done.") });
-  } catch (err) {
-    console.error("[browse] await failed:", err);
-    res.status(502).json({ error: { message: "browser backend error" } });
-  }
-});
+// Legacy task HTTP contracts are installed above and backed by durable employee runs.
 
 // LiveKit room ticket: the phone trades its gateway token for a short-lived
 // room JWT. The LiveKit API secret never leaves the server, and each user gets
@@ -427,7 +171,7 @@ app.post("/livekit-token", async (req, res) => {
   // turn are reused as-is: their briefing is still queued, and rotating them
   // would stack a second one (the API allows one system.message per turn).
   const u = await userResources(userId);
-  if (u.sessionId && u.sessionUsed) {
+  if (u.sessionId && u.sessionUsed && !employee.db.list(userId,"run").some(r=>employee.q.active.has(r.id))) {
     u.sessionId = undefined;
     u.sessionUsed = false;
     if (u.recentTasks?.length) queueContext(userId, buildBriefing(u.recentTasks));
@@ -436,7 +180,7 @@ app.post("/livekit-token", async (req, res) => {
   // Pre-warm: session creation costs ~3-4s, which on a lazy path lands on the
   // call's first task. Kicking it off now hides the cold start behind call
   // setup and greeting time.
-  void ensureUser(userId).catch((err) => console.warn(`[provision] pre-warm failed for ${userId}:`, err));
+  if(process.env.ANTHROPIC_API_KEY && employee.db.list(userId,"agent")[0]?.runtime!=="hermes")void ensureUser(userId).catch(()=>console.warn("[provision] pre-warm failed"));
   const { AccessToken } = await import("livekit-server-sdk");
   // The engine choice (gemini | openai) rides as participant metadata; the
   // worker reads it when the user joins and picks the realtime model.
@@ -652,9 +396,11 @@ app.post("/context", async (req, res) => {
 // ---------- WS: the app's event channel (protocol v3 handshake) ----------
 
 const httpServer = createServer(app);
-const wss = new WebSocketServer({ server: httpServer });
+const wss = new WebSocketServer({ server: httpServer,maxPayload:65536 });
+process.on("SIGTERM",()=>{employee.stop();httpServer.close();});
 
 wss.on("connection", (ws: WebSocket) => {
+  let authenticated=false;const timeout=setTimeout(()=>ws.close(),10000);ws.on("close",()=>clearTimeout(timeout));
   // Mirror the local gateway's opening move so OpenClawEventClient handshakes unchanged.
   ws.send(JSON.stringify({ type: "event", event: "connect.challenge", payload: {} }));
 
@@ -665,10 +411,11 @@ wss.on("connection", (ws: WebSocket) => {
     } catch {
       return;
     }
-    if (msg.type !== "req" || msg.method !== "connect") return;
+    if (authenticated || msg.type !== "req" || msg.method !== "connect") return;
 
     const token = msg.params?.auth?.token;
-    const userId = token ? (config.tokens.get(token) ?? null) : null;
+    const dynamic=token?lookupToken(token):null;
+    const userId=token?(config.tokens.get(token)??(dynamic?.status==="approved"?dynamic.userId:null)):null;
     if (!userId) {
       ws.send(
         JSON.stringify({ type: "res", id: msg.id, ok: false, error: { message: "invalid token" } }),
@@ -677,6 +424,7 @@ wss.on("connection", (ws: WebSocket) => {
       return;
     }
 
+    authenticated=true;clearTimeout(timeout);
     registerSocket(userId, ws);
     ws.send(JSON.stringify({ type: "res", id: msg.id, ok: true }));
     console.log(`[ws] client connected for ${userId}`);

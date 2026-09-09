@@ -90,18 +90,18 @@ export async function loadStore(): Promise<StoreShape> {
   if (cache) return cache;
   try {
     cache = JSON.parse(await readFile(path, "utf8")) as StoreShape;
-  } catch {
+  } catch (err) {
+    if((err as NodeJS.ErrnoException).code!=="ENOENT")throw err;
     cache = { shared: {}, users: {} };
   }
   return cache;
 }
 
-export async function saveStore(): Promise<void> {
-  if (!cache) return;
-  await mkdir(dirname(path), { recursive: true });
-  const tmp = `${path}.tmp`;
-  await writeFile(tmp, JSON.stringify(cache, null, 2));
-  await rename(tmp, path);
+let saving=Promise.resolve();
+export async function saveStore():Promise<void>{
+ if(!cache)return;
+ const snapshot=JSON.stringify(cache,null,2);
+ const job=saving.catch(()=>{}).then(async()=>{await mkdir(dirname(path),{recursive:true,mode:0o700});const tmp=`${path}.tmp`;await writeFile(tmp,snapshot,{mode:0o600});await rename(tmp,path);});saving=job;return job;
 }
 
 export async function accounts(): Promise<Record<string, Account>> {

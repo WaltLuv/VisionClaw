@@ -18,7 +18,7 @@ export class HermesProvider implements AgentProvider{
    signal.addEventListener('abort',abort,{once:true});if(signal.aborted){abort();return;}
    child.on('error',()=>finish(Error('Hermes Python environment could not start')));child.stdin.on('error',()=>finish(Error('Employee tool channel disconnected')));child.stderr.resume();
    const lines=createInterface({input:child.stdout});
-   lines.on('line',line=>{chain=chain.then(async()=>{if(settled)return;let m:any;try{m=JSON.parse(line);}catch{return;}if(m.type==='result'){finish(undefined,m.result);return;}if(m.type==='error'){finish(Error('Hermes could not finish. Check provider authentication.'));return;}if(m.type!=='tool')return;
+   lines.on('line',line=>{chain=chain.then(async()=>{if(settled)return;let m:any;try{m=JSON.parse(line);}catch{return;}if(m.type==='result'){finish(undefined,m.result);return;}if(m.type==='error'){const code=/^[A-Za-z]{1,60}$/.test(m.code)?m.code:'RuntimeError';finish(Error(`Hermes could not finish (${code}). Check runtime configuration and provider authentication.`));return;}if(m.type!=='tool')return;
     let reply:any;try{reply=await this.tools.wait(owner,run.id,m.name,m.args,`${run.id}:${++seq}`,signal);}catch(e){reply={error:e instanceof Error?e.message:'Capability failed'};}
     if(!settled)child.stdin.write(JSON.stringify(reply)+'\n');
    }).catch(()=>finish(Error('Employee tool channel failed')));});

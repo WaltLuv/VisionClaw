@@ -103,7 +103,11 @@ export async function initAuth(): Promise<void> {
 
 /** Resolve a dynamic (sign-in) token. Static GATEWAY_TOKENS are not consulted here. */
 export function lookupToken(token: string): { userId: string; status: AccountStatus } | null {
-  const userId = tokenIndex.get(sha256(token));
+  return lookupTokenHash(sha256(token));
+}
+
+export function lookupTokenHash(hash:string): {userId:string;status:AccountStatus}|null {
+  const userId = tokenIndex.get(hash);
   if (!userId) return null;
   const acct = accountsRef[userId];
   return acct ? { userId, status: acct.status } : null;
