@@ -1,4 +1,3 @@
 import Anthropic from "@anthropic-ai/sdk";
-
-/** One client for the whole gateway. Reads ANTHROPIC_API_KEY from the environment. */
-export const anthropic = new Anthropic();
+let client:Anthropic|undefined;
+export const anthropic=new Proxy({} as Anthropic,{get(_target,key){client??=new Anthropic();const value=Reflect.get(client,key);return typeof value==="function"?value.bind(client):value;}});

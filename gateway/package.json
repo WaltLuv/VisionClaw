@@ -6,18 +6,29 @@
   "description": "Hosted action-agent gateway for VisionClaw: speaks the app's OpenClaw-compatible protocol in front, drives Anthropic Managed Agents behind.",
   "scripts": {
     "dev": "tsx watch src/server.ts",
-    "start": "tsx src/server.ts",
+    "start": "node --import tsx src/server.ts",
     "provision": "tsx src/provision-cli.ts",
     "typecheck": "tsc --noEmit",
     "trace": "tsx src/trace-cli.ts",
-    "trace:export": "tsx src/trace-export-cli.ts"
+    "trace:export": "tsx src/trace-export-cli.ts",
+    "test": "node --import tsx --test tests/*.test.ts",
+    "lint": "prettier --check src/employee tests"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.115.0",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "dotenv": "^17.0.0",
     "express": "^5.1.0",
+    "express-rate-limit": "^8.7.0",
+    "helmet": "^8.3.0",
     "livekit-server-sdk": "^2.17.0",
-    "ws": "^8.18.0"
+    "pdf-parse": "^2.4.5",
+    "playwright": "^1.63.0",
+    "retell-sdk": "^5.64.0",
+    "sharp": "^0.35.4",
+    "twilio": "^6.1.0",
+    "ws": "^8.18.0",
+    "zod": "^4.5.4"
   },
   "devDependencies": {
     "@types/express": "^5.0.0",
@@ -25,5 +36,8 @@
     "@types/ws": "^8.5.0",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0"
+  },
+  "engines": {
+    "node": ">=24.0.0"
   }
 }

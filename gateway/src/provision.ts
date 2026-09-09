@@ -121,14 +121,14 @@ function mcpServers() {
 
 function agentTools() {
   return [
-    { type: "agent_toolset_20260401" as const },
+    { type: "agent_toolset_20260401" as const, default_config: { permission_policy: { type: "always_ask" as const } } },
     ...activeApps().map((a) => ({
       type: "mcp_toolset" as const,
       mcp_server_name: a.id,
       // Connected apps are read-only today, so a confirmation prompt would only
       // stall a hands-free voice turn. Destructive tools should flip to
       // always_ask and be surfaced as a spoken confirmation instead.
-      default_config: { permission_policy: { type: "always_allow" as const } },
+      default_config: { permission_policy: { type: "always_ask" as const } },
     })),
   ];
 }

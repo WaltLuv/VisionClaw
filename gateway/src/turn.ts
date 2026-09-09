@@ -1,28 +1,25 @@
 import { anthropic } from "./cma.js";
+export const turnHooks=new Map<string,{confirm:(event:any)=>Promise<boolean>;custom:(event:any)=>Promise<unknown>}>();
 
-/**
- * A tool gated by `always_ask` parks the session in `requires_action` until the
- * client answers. Nothing else answers for us, so approve automatically and let
- * the drain continue; without this the loop waits forever. Returns false when
- * the pending action is something we cannot resolve, so the caller can stop.
- *
- * When destructive tools arrive, this is the hook that should instead surface a
- * spoken confirmation and wait for the user's actual answer.
- */
-async function resolvePendingAction(sessionId: string, eventIds: string[]): Promise<boolean> {
-  if (eventIds.length === 0) return false;
-  let resolved = false;
-  for (const toolUseId of eventIds) {
-    try {
-      await anthropic.beta.sessions.events.send(sessionId, {
-        events: [{ type: "user.tool_confirmation", tool_use_id: toolUseId, result: "allow" }],
-      });
-      resolved = true;
-    } catch (err) {
-      console.warn("[turn] could not confirm pending tool use", toolUseId, err);
-    }
+
+/** Resolve built-in confirmations; custom requests require a different event type. */
+async function resolvePendingAction(sessionId:string,eventIds:string[],resolvedCustom=new Set<string>()){
+ if(!eventIds.length)return false;
+ for(const id of eventIds){
+  if(resolvedCustom.has(id))continue;
+  let pending:any;for await(const event of anthropic.beta.sessions.events.list(sessionId)){if(event.id===id){pending=event;break;}}
+  if(!pending)throw Error('Pending action could not be reconciled');
+  if(pending.type==='agent.custom_tool_use'){
+   // A previous process may have stopped before replying. Never execute that old action
+   // under a new run; its durable action ledger must be reviewed by the owner.
+   await anthropic.beta.sessions.events.send(sessionId,{events:[{type:'user.custom_tool_result',custom_tool_use_id:id,content:[{type:'text',text:'Previous request interrupted. Review recorded actions before requesting new work.'}],is_error:true}]});
+   resolvedCustom.add(id);
+  }else{
+   const allow=await turnHooks.get(sessionId)?.confirm(pending)??false;
+   await anthropic.beta.sessions.events.send(sessionId,{events:[{type:'user.tool_confirmation',tool_use_id:id,result:allow?'allow':'deny'}]});
   }
-  return resolved;
+ }
+ return true;
 }
 
 /**
@@ -56,6 +53,7 @@ async function sendUserTurn(
   userText: string,
   contextNotes: string[],
   imageBase64?: string,
+  extraImages:string[]=[],
 ): Promise<void> {
   // The user turn is text plus, optionally, what the user is looking at: the
   // voice layer attaches the current camera frame when the task refers to
@@ -72,6 +70,7 @@ async function sendUserTurn(
       source: { type: "base64", media_type: "image/jpeg", data: imageBase64 },
     });
   }
+  for(const data of extraImages)userContent.push({type:"image",source:{type:"base64",media_type:"image/jpeg",data}});
   const events = [
     { type: "user.message" as const, content: userContent },
     ...(contextNotes.length > 0
@@ -147,12 +146,19 @@ export async function runTurn(
   onLateResult: (text: string, stats: TurnStats) => void,
   contextNotes: string[] = [],
   imageBase64?: string,
+  signal?:AbortSignal,
+  extraImages:string[]=[],
 ): Promise<TurnResult> {
+  signal?.throwIfAborted();
   const stream = await anthropic.beta.sessions.events.stream(sessionId);
+  const abort=()=>{stream.controller.abort();void anthropic.beta.sessions.events.send(sessionId,{events:[{type:"user.interrupt"}]}).catch(()=>{});};
+  signal?.addEventListener("abort",abort,{once:true});
+  if(signal?.aborted){abort();signal.throwIfAborted();}
+  const resolvedCustom=new Set<string>();
 
   // system.message events are only accepted immediately after a user.message
   // in the same request, so queued context rides along with the next turn.
-  await sendUserTurn(sessionId, userText, contextNotes, imageBase64);
+  await sendUserTurn(sessionId, userText, contextNotes, imageBase64, extraImages);
 
   const parts: string[] = [];
   let timedOut = false;
@@ -200,6 +206,13 @@ export async function runTurn(
       if (ev.type === "agent.thinking") stats.thinking++;
       if (ev.type === "session.status_idle") stats.stop_reason = ev.stop_reason?.type ?? null;
       stats.duration_ms = Date.now() - startedAt;
+      signal?.throwIfAborted();
+      if(event.type==='agent.custom_tool_use'){
+       const result=await turnHooks.get(sessionId)?.custom(event)??{error:'No governed tool handler'};
+       signal?.throwIfAborted();
+       await anthropic.beta.sessions.events.send(sessionId,{events:[{type:'user.custom_tool_result',custom_tool_use_id:event.id,content:[{type:'text',text:JSON.stringify(result)}]}]});
+       resolvedCustom.add(event.id);
+      }
       if (event.type === "agent.message") {
         stats.messages++;
         for (const block of event.content) {
@@ -209,7 +222,7 @@ export async function runTurn(
         // Error events can be transient and precede a successful answer;
         // keep draining and let a terminal status end the turn. Only if the
         // stream ends with no text at all does this become the user's answer.
-        console.error("[turn] session.error event:", JSON.stringify(event).slice(0, 500));
+        console.error("[turn] session error");
         sawError = true;
       } else if (event.type === "session.status_terminated") {
         break;
@@ -218,7 +231,7 @@ export async function runTurn(
         // resolve it; otherwise the drain would hang until the socket dies.
         const stop = (event as { stop_reason?: { type?: string; event_ids?: string[] } }).stop_reason;
         if (stop?.type !== "requires_action") break;
-        if (!(await resolvePendingAction(sessionId, stop.event_ids ?? []))) break;
+        if (!(await resolvePendingAction(sessionId, stop.event_ids ?? [],resolvedCustom))) break;
       }
     }
     if (parts.length === 0 && sawError) {
@@ -234,10 +247,12 @@ export async function runTurn(
     }, maxWaitMs).unref?.();
   });
 
-  const finished = await Promise.race([drain, timeout]);
+  let finished:string|null;
+  try{finished=await Promise.race([drain,timeout]);}catch(e){abort();throw e;}finally{signal?.removeEventListener("abort",abort);}
+  if(finished===null&&signal){abort();throw Error("Hosted agent execution deadline exceeded");}
 
   if (finished !== null) {
-    return { text: finished || "Done.", deferred: false, stats };
+    return { text: finished || "The task ended without a verified result.", deferred: false, stats };
   }
 
   // Deferred: keep draining in the background and hand the result to the caller.
@@ -308,7 +323,7 @@ export async function runTurnStreaming(
       if (full) parts.push(full);
     } else if (event.type === "session.error") {
       // Transient error events can precede a successful answer; keep draining.
-      console.error("[turn] session.error event:", JSON.stringify(event).slice(0, 500));
+      console.error("[turn] session error");
       sawError = true;
     } else if (event.type === "session.status_terminated") {
       break;
