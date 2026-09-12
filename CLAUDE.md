@@ -26,3 +26,10 @@ git push origin main
 ```
 
 At the end, report the exact `main` commit SHA, test results, blocked owner-credential actions, and known limitations.
+
+
+## Procurement launch requirement
+
+eBay is optional only. It is not the launch procurement strategy.
+
+The launch must support Home Depot, Lowe's, Amazon, Walmart, configurable local suppliers and configurable specialty vendors through a provider-neutral supplier registry. Implement normalized offers, parallel search, price/inventory/fulfillment comparison, cart building, exact quote revalidation and approval-gated checkout. Use official APIs where available and approved Browserbase/Stagehand or MCP adapters where APIs are unavailable. Do not fake availability, checkout or order success. Add fixture tests for each adapter and document the owner credentials required for live verification.
