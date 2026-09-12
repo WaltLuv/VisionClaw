@@ -112,9 +112,48 @@ trace carrying a header. Cycles and deep nesting are handled rather than hanging
 No credential is stored in the client or shipped in its bundle. The realtime API
 secret stays on the server; the phone receives only a 15-minute room token.
 
+## Messages and calls
+
+An outbound message or call is the model acting on the world through a contact
+it resolved itself, so the approval is what stands between that and a real
+phone. Nothing reaches the provider before a decision, and the approval record
+names the exact destination and the exact text or objective being authorised.
+
+The destination is re-checked against the stored contact at send time, so an
+approval for one person cannot deliver to another number, and a blocked contact
+is never messaged regardless. A send whose outcome is unknown is recorded
+`uncertain` and refused on every later attempt: the provider is called once and
+never again on its own.
+
+Inbound webhooks are refused without a signature, with a signature from another
+secret, and with a valid signature from a different provider account. A replayed
+inbound message is stored and queued once. A replayed delivery status cannot
+walk a delivered message back to queued, and a call webhook is refused when its
+signature's timestamp is stale. An incoming message reaches the employee
+explicitly framed as untrusted data carrying no authority to send or spend.
+
+Covered by `communications.test.ts`.
+
+## Connectors
+
+A malformed connector file — unparseable, wrong shape, an unsafe id, an unknown
+side-effect class, no owner — disables the connectors and is reported, rather
+than failing the gateway to start. A connector reached over plain http is
+refused, since its bearer token and every tool argument would travel in clear. A
+connector is unusable by an owner it does not list and without its credential.
+
+A connector cannot expose its own checkout tools as ordinary tools: checkout
+goes through the exact-quote adapter, which re-prices and requires approval of a
+specific total, and a second path would be an ungoverned way to spend money.
+
+Browser work is approval-gated before it is attempted, refuses clearly when not
+connected, cancels idempotently, cleans up sessions whose task has finished, and
+cannot be cancelled by another owner. Covered by `adapters.test.ts`.
+
 ## Known gaps
 
-- Rate limits are per process. Multiple machines do not share a counter.
+- Rate limits are per process and keyed by client address. Multiple machines do
+  not share a counter.
 - Webhook signature verification is exercised against fixtures, not live
   providers.
 - The container image is not built or scanned in this environment.
