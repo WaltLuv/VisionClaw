@@ -4,6 +4,7 @@
 // drift between two screens.
 
 import type {Action, Approval, Artifact, Connections, Run, RunStatus, State} from './api';
+import type {Card, TranscriptEntry} from './realtime';
 
 export const TERMINAL: ReadonlySet<RunStatus> = new Set(['completed', 'failed', 'cancelled']);
 
@@ -108,3 +109,29 @@ export function relativeTime(iso: string | undefined, now = Date.now()): string 
   if (hours < 24) return `${hours}h ago`;
   return `${Math.floor(hours / 24)}d ago`;
 }
+
+/**
+ * Speech arrives as segments that are re-sent as they are refined, so a segment
+ * already on screen is replaced in place rather than appended. Appending is what
+ * produces the stuttering duplicate-line transcript.
+ */
+export function applyTranscript(list: TranscriptEntry[], entry: TranscriptEntry): TranscriptEntry[] {
+  const at = list.findIndex(t => t.id === entry.id);
+  if (at < 0) return [...list, entry];
+  // A final segment must not be overwritten by a late interim one for the same id.
+  if (list[at]!.final && !entry.final) return list;
+  const next = [...list];
+  next[at] = entry;
+  return next;
+}
+
+/** Cards are addressed by uuid: reusing one updates that card in place. */
+export function applyCard(list: Card[], card: Card): Card[] {
+  const at = list.findIndex(c => c.uuid === card.uuid);
+  if (at < 0) return [...list, card];
+  const next = [...list];
+  next[at] = card;
+  return next;
+}
+
+export const dismissCard = (list: Card[], uuid: string): Card[] => list.filter(c => c.uuid !== uuid);

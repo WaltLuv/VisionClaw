@@ -2,7 +2,7 @@ import './styles.css';
 import {api, setCsrf, subscribe, type Connections, type State} from './api';
 import {Camera} from './camera';
 import {h, mount} from './dom';
-import {emptyState} from './store';
+import {applyCard, applyTranscript, dismissCard, emptyState} from './store';
 import {RealtimeSession, type Card, type SessionState, type TranscriptEntry} from './realtime';
 import type {Ctx, Tab} from './ui/ctx';
 import {login} from './ui/login';
@@ -47,19 +47,9 @@ const ctx: Ctx = {
 
 ctx.session = new RealtimeSession({
   onState(state: SessionState, detail?: string) {ctx.sessionState = state; ctx.sessionDetail = detail; render();},
-  onTranscript(entry: TranscriptEntry) {
-    // Segments arrive repeatedly as speech is refined; replace by id so an
-    // interim line is corrected in place instead of duplicated.
-    const at = ctx.transcript.findIndex(t => t.id === entry.id);
-    if (at >= 0) ctx.transcript[at] = entry; else ctx.transcript.push(entry);
-    render();
-  },
-  onCard(card: Card) {
-    const at = ctx.cards.findIndex(c => c.uuid === card.uuid);
-    if (at >= 0) ctx.cards[at] = card; else ctx.cards.push(card);
-    render();
-  },
-  onDismissCard(uuid: string) {ctx.cards = ctx.cards.filter(c => c.uuid !== uuid); render();},
+  onTranscript(entry: TranscriptEntry) {ctx.transcript = applyTranscript(ctx.transcript, entry); render();},
+  onCard(card: Card) {ctx.cards = applyCard(ctx.cards, card); render();},
+  onDismissCard(uuid: string) {ctx.cards = dismissCard(ctx.cards, uuid); render();},
 });
 
 const TABS: {id: Tab; label: string}[] = [
