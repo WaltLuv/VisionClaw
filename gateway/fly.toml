@@ -4,8 +4,13 @@
 #   fly volumes create gateway_data --size 1 --region sjc -a visionclaw-gateway
 #   fly secrets set ANTHROPIC_API_KEY=... GOOGLE_CLIENT_SECRET=... \
 #                   STATE_SECRET=... GATEWAY_TOKENS=... -a visionclaw-gateway
-#   fly deploy
+#   fly deploy --config gateway/fly.toml --dockerfile Dockerfile .
 #   fly certs add api.visionagents.app -a visionclaw-gateway
+#
+# Deploy from the REPOSITORY ROOT, not from gateway/. The image builds the phone
+# client as well as the gateway, and the gateway resolves that build relative to
+# its own source, so web/ has to be inside the build context. Deploying with
+# gateway/ as the context produces a gateway that serves nothing on '/'.
 #
 # The OAuth redirect is derived from PUBLIC_BASE_URL, so that exact host must be
 # an authorized redirect URI on the Google OAuth client.
@@ -14,6 +19,7 @@ app = 'visionclaw-gateway'
 primary_region = 'sjc'
 
 [build]
+  # Repository-root Dockerfile: builds web/ and gateway/ into one image.
   dockerfile = 'Dockerfile'
 
 [env]
@@ -23,6 +29,9 @@ primary_region = 'sjc'
   # memory store. Losing it strands those resources and silently re-provisions
   # empty ones, so it must outlive any single machine.
   STORE_PATH = '/data/gateway-store.json'
+  # Durable employee records, artifacts and per-owner Hermes homes. Defaults to
+  # the store file's directory, but naming it keeps the volume explicit.
+  EMPLOYEE_DATA_DIR = '/data'
   WORKSPACE_MCP_URL = 'https://mcp.visionagents.app/mcp'
   AGENT_MODEL = 'claude-sonnet-5'
   AGENT_EFFORT = 'none'
@@ -41,6 +50,15 @@ primary_region = 'sjc'
   auto_start_machines = true
   min_machines_running = 1
   processes = ['app']
+
+  # Readiness, so a machine that came up without a usable process is replaced
+  # rather than left serving errors.
+  [[http_service.checks]]
+    interval = '30s'
+    timeout = '5s'
+    grace_period = '20s'
+    method = 'GET'
+    path = '/health'
 
 [[mounts]]
   source = 'gateway_data'

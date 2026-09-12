@@ -53,7 +53,7 @@ describe('web/dist packaging', () => {
   });
 
   it('keeps the first load small enough for a phone on mobile data', () => {
-    const entry = readdirSync(join(dist, 'assets')).filter(f => f.startsWith('index-') && f.endsWith('.js'));
+    const entry = readdirSync(join(dist, 'assets')).filter((f: string) => f.startsWith('index-') && f.endsWith('.js'));
     expect(entry).toHaveLength(1);
     const bytes = readFileSync(join(dist, 'assets', entry[0]!)).byteLength;
     // The realtime SDK is a separate chunk fetched only when a conversation

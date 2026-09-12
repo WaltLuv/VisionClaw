@@ -1,5 +1,6 @@
 import helmet from "helmet";
 import {fileURLToPath} from "node:url";
+import {existsSync} from "node:fs";
 import {installEmployee} from "./employee/routes.js";
 import {installLegacyTasks} from "./employee/legacy.js";
 import {registerCommunicationWebhooks} from "./employee/communications.js";
@@ -134,7 +135,13 @@ const employee=installEmployee(app,userFromRequest,validGrant);
 installLegacyTasks(app,employee,userFromRequest);
 registerCommunicationWebhooks(app,employee.db,(owner,task,key,conversationId)=>{employee.q.create(owner,{task,context:{source:'webhook',conversationId}},key);void employee.q.tick();});
 app.use((req,res,next)=>{if(req.path==='/'||req.path.startsWith('/assets/'))res.set('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; media-src 'self' blob:; connect-src 'self' wss:; frame-src https:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'");next();});
-app.use(express.static(fileURLToPath(new URL('../../web/dist/',import.meta.url))));
+// The phone client. WEB_DIST_DIR overrides it; the default mirrors the repo
+// layout, which the image reproduces so this resolves the same way in both. A
+// missing build is announced at startup, because the symptom otherwise is a
+// silent 404 on '/' that looks like a routing problem rather than a missing step.
+const webDist=process.env.WEB_DIST_DIR?path.resolve(process.env.WEB_DIST_DIR):fileURLToPath(new URL('../../web/dist/',import.meta.url));
+if(!existsSync(path.join(webDist,'index.html')))console.warn(JSON.stringify({event:'web.missing',dir:webDist,hint:'Run `npm ci && npm run build` in web/ so the phone client can be served.'}));
+app.use(express.static(webDist));
 registerConnectRoutes(app, userFromRequest);
 registerAuthRoutes(app);
 
