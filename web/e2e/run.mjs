@@ -125,8 +125,49 @@ try {
   check('the governed tool ran and was recorded', action?.status === 'completed', `action=${action?.status}`);
   check('an evidence artifact was stored', state.artifact.some(a => a.kind === 'document' || a.kind === 'tool_receipt'));
 
+  // 4b. The visual path: an image captured on the phone is uploaded as an
+  // artifact and carried into a task as authorised evidence. Synthesised with a
+  // canvas rather than a camera, but it travels the same upload, validation,
+  // attachment and evidence-link route a photo does.
+  const visual = await page.evaluate(async () => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 32; canvas.height = 24;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#3366aa'; ctx.fillRect(0, 0, 32, 24);
+    const blob = await new Promise(r => canvas.toBlob(r, 'image/jpeg', 0.9));
+    const csrf = await fetch('/api/session', {credentials: 'same-origin'}).then(r => r.json()).then(s => s.csrf);
+    const artifact = await fetch('/api/artifacts', {
+      method: 'POST', credentials: 'same-origin', body: blob,
+      headers: {'content-type': 'application/octet-stream', 'x-file-name': 'Shelf photo.jpg', 'x-file-type': 'image/jpeg', 'x-csrf-token': csrf},
+    }).then(r => r.json());
+    const run = await fetch('/api/execute', {
+      method: 'POST', credentials: 'same-origin',
+      headers: {'content-type': 'application/json', 'x-csrf-token': csrf, 'idempotency-key': 'visual-1'},
+      body: JSON.stringify({task: 'Describe the attached photo', context: {source: 'phone', attachments: [artifact.id]}}),
+    }).then(r => r.json());
+    return {artifact, run};
+  });
+  check('a captured image is stored as an owned artifact', visual.artifact?.kind === 'photo' && visual.artifact?.mime === 'image/jpeg', `kind=${visual.artifact?.kind} mime=${visual.artifact?.mime}`);
+  check('the upload response carries no server file path', visual.artifact?.path === undefined);
+  check('the task accepts the image as authorised visual context', visual.run?.context?.attachments?.[0] === visual.artifact?.id);
+
+  await waitFor(async () => {
+    const s = await page.evaluate(async () => (await fetch('/api/state', {credentials: 'same-origin'})).json());
+    return s.run.find(r => r.id === visual.run.id)?.status === 'completed';
+  }, 'the visual task to finish', 90000);
+  const visualState = await page.evaluate(async () => (await fetch('/api/state', {credentials: 'same-origin'})).json());
+  check('the image is linked to the task as evidence', visualState.evidence_link.some(l => l.runId === visual.run.id && l.artifactId === visual.artifact.id));
+  check('a task carrying visual context completes through the runtime', visualState.run.find(r => r.id === visual.run.id)?.status === 'completed');
+
+  // An attachment the caller does not own must not be usable as context.
+  const foreign = await page.evaluate(async () => {
+    const csrf = await fetch('/api/session', {credentials: 'same-origin'}).then(r => r.json()).then(s => s.csrf);
+    return (await fetch('/api/execute', {method: 'POST', credentials: 'same-origin', headers: {'content-type': 'application/json', 'x-csrf-token': csrf, 'idempotency-key': 'foreign-1'}, body: JSON.stringify({task: 'Use this', context: {source: 'phone', attachments: ['00000000-0000-4000-8000-000000000000']}})})).status;
+  });
+  check('an attachment that is not yours is refused', foreign >= 400, `status=${foreign}`);
+
   // 5. Resubmitting the same idempotency key must not create a second run.
-  const before = state.run.length;
+  const before = (await page.evaluate(async () => (await fetch('/api/state', {credentials: 'same-origin'})).json())).run.length;
   const replay = await page.evaluate(async csrf => {
     const send = () => fetch('/api/execute', {method: 'POST', credentials: 'same-origin', headers: {'content-type': 'application/json', 'x-csrf-token': csrf, 'idempotency-key': 'fixed-key'}, body: JSON.stringify({task: 'Say hello', context: {source: 'text', attachments: []}})}).then(r => r.json());
     const first = await send();
