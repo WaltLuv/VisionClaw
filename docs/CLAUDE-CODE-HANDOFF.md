@@ -1,7 +1,8 @@
 # Claude Code Handoff — VisionClaw Phone-First AI Employee
 
 Repository: https://github.com/WaltLuv/VisionClaw
-Branch: feat/phone-first-employee
+Authoritative branch: main
+Historical implementation branch: feat/phone-first-employee (already promoted into main)
 Upstream: https://github.com/Intent-Lab/VisionClaw
 Baseline checkpoint already saved: a62fb16897c1daf2927c271e5d4199b1ebf76bae
 
@@ -154,4 +155,4 @@ Put only genuine external prerequisites in docs/OWNER-ACTIONS.md, such as:
 
 ## Final handoff
 
-Before stopping, run lint, typecheck, unit/integration tests, web build, secret scan, and applicable E2E tests. Review git diff for TODO/FIXME/HACK, stale OpenClaw terminology and hardcoded secrets. Update README/docs/SETUP.md/docs/SECURITY.md/docs/TESTING.md/docs/OWNER-ACTIONS.md. Commit logical changes to the same branch and report exact commit SHAs, verified tests, blocked tests and known limitations. Never report “build complete” while the PWA, deployment, or required provider paths remain unverified.
+Before stopping, run lint, typecheck, unit/integration tests, web build, secret scan, and applicable E2E tests. Review git diff for TODO/FIXME/HACK, stale OpenClaw terminology and hardcoded secrets. Update README/docs/SETUP.md/docs/SECURITY.md/docs/TESTING.md/docs/OWNER-ACTIONS.md. Commit logical changes directly to main and report exact commit SHAs, verified tests, blocked tests and known limitations. Never report “build complete” while the PWA, deployment, or required provider paths remain unverified.
