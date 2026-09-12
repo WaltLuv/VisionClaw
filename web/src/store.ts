@@ -1,0 +1,110 @@
+// App state and the pure rules the UI reads. The rules live here rather than
+// inline in views so they can be tested without a DOM, and so the same
+// judgement (is this approval still actionable? is this run finished?) cannot
+// drift between two screens.
+
+import type {Action, Approval, Artifact, Connections, Run, RunStatus, State} from './api';
+
+export const TERMINAL: ReadonlySet<RunStatus> = new Set(['completed', 'failed', 'cancelled']);
+
+export const emptyState = (): State => ({
+  run: [], agent: [], skill: [], memory: [], conversation: [], message: [], approval: [],
+  artifact: [], contact: [], communication: [], offer: [], cart: [], quote: [], order: [],
+  workflow: [], computer: [], policy: [], action: [], evidence_link: [],
+});
+
+export const STATUS_LABEL: Record<RunStatus, string> = {
+  queued: 'Queued',
+  working: 'Working',
+  verifying: 'Checking the result',
+  completed: 'Done',
+  failed: "Couldn't finish",
+  cancelled: 'Stopped',
+  needs_user: 'Needs you',
+};
+
+/** Side effects a person must authorise individually, in the gateway's own terms. */
+export const EFFECT_LABEL: Record<string, string> = {
+  read: 'Look something up',
+  write: 'Save something',
+  communication: 'Send a message or place a call',
+  destructive: 'Delete something',
+  financial: 'Spend money',
+  sensitive: 'Handle something sensitive',
+  computer: 'Use a browser or computer',
+};
+
+/**
+ * Effects where "always allow" should not be offered. Standing authority to
+ * spend or to delete is exactly what the handoff forbids inferring, so the UI
+ * never presents it as a choice for those.
+ */
+export const NO_STANDING_APPROVAL: ReadonlySet<string> = new Set(['financial', 'destructive', 'communication']);
+
+export const isTerminal = (run: Run) => TERMINAL.has(run.status);
+
+/** Newest first, by creation time, falling back to insertion order from the gateway. */
+export function sortRuns(runs: Run[]): Run[] {
+  return [...runs].sort((a, b) => Date.parse(b.createdAt ?? '') - Date.parse(a.createdAt ?? '') || 0);
+}
+
+/** The run the Today screen should be showing: the newest one still in flight. */
+export function activeRun(runs: Run[]): Run | undefined {
+  return sortRuns(runs).find(r => !isTerminal(r));
+}
+
+/**
+ * Approvals the person can still act on. An expired approval is dropped rather
+ * than shown as actionable: the gateway refuses a decision on it, and offering
+ * the button would imply an authority that no longer exists.
+ */
+export function liveApprovals(approvals: Approval[], now = Date.now()): Approval[] {
+  return approvals.filter(a => a.status === 'pending' && Number(a.expiresAt ?? 0) > now);
+}
+
+/** Actions left mid-flight by a restart; these block resume until reconciled. */
+export function unreconciledActions(actions: Action[], runId?: string): Action[] {
+  return actions.filter(a => ['executing', 'uncertain'].includes(a.status) && (!runId || a.runId === runId));
+}
+
+export function canResume(run: Run, actions: Action[]): boolean {
+  return !!run.recovered && !isTerminal(run) && unreconciledActions(actions, run.id).length === 0;
+}
+
+export const runArtifacts = (artifacts: Artifact[], runId: string) => artifacts.filter(a => a.runId === runId);
+
+/**
+ * Rows for an approval card. Financial approvals must show the exact terms
+ * being authorised, so the details object is rendered field by field instead of
+ * summarised -- a person approving a purchase sees supplier, items, quantities
+ * and total, not a sentence about them.
+ */
+export function approvalRows(approval: Approval): {label: string; value: string}[] {
+  const details = approval.details ?? {};
+  return Object.entries(details)
+    .filter(([, v]) => v !== undefined && v !== null && v !== '')
+    .map(([k, v]) => ({label: humanise(k), value: typeof v === 'object' ? JSON.stringify(v, null, 1) : String(v)}));
+}
+
+export function humanise(key: string): string {
+  const spaced = key.replace(/[_-]+/g, ' ').replace(/([a-z0-9])([A-Z])/g, '$1 $2').trim();
+  return spaced.charAt(0).toUpperCase() + spaced.slice(1);
+}
+
+/** Capability flags the UI uses to hide what the gateway genuinely cannot do. */
+export function unavailableReason(c: Connections | null, feature: keyof Connections): string | null {
+  if (!c) return 'Checking what this employee can do…';
+  return c[feature] ? null : 'Not set up on this server yet.';
+}
+
+export function relativeTime(iso: string | undefined, now = Date.now()): string {
+  if (!iso) return '';
+  const ms = now - Date.parse(iso);
+  if (!Number.isFinite(ms)) return '';
+  if (ms < 60_000) return 'just now';
+  const mins = Math.floor(ms / 60_000);
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.floor(hours / 24)}d ago`;
+}
