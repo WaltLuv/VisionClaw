@@ -6,14 +6,14 @@ credential this environment does not have, that is stated rather than implied.
 ## What runs without any credential
 
 ```bash
-cd gateway && npm ci && npx tsc --noEmit && npm test     # 49 tests
-cd web     && npm ci && npm run verify                   # build + 70 tests
+cd gateway && npm ci && npx tsc --noEmit && npm test     # 78 tests
+cd web     && npm ci && npm run verify                   # build + 88 tests
 ```
 
 `npm run verify` in `web/` builds first on purpose: the packaging tests read the
 real `web/dist` output rather than a description of it.
 
-Without `HERMES_CHECKOUT` the gateway suite reports 48 passed and 1 skipped --
+Without `HERMES_CHECKOUT` the gateway suite reports 77 passed and 1 skipped --
 the skipped one is the Hermes subprocess test.
 
 ## Running the Hermes tests
@@ -26,7 +26,7 @@ python3 -m venv .hermes-venv
 ./.hermes-venv/bin/pip install hermes-agent==0.19.0
 export HERMES_CHECKOUT="$(./.hermes-venv/bin/python -c 'import sysconfig;print(sysconfig.get_paths()["purelib"])')"
 export HERMES_PYTHON="$PWD/.hermes-venv/bin/python"
-cd gateway && npm test                                   # 49 passed, 0 skipped
+cd gateway && npm test                                   # 78 passed, 0 skipped
 ```
 
 `HERMES_CHECKOUT` must be the directory containing `run_agent.py`; for a pip
@@ -56,7 +56,7 @@ sign-out.
 
 ```bash
 cd web && npm run build
-cd web && npm run e2e                                    # 54 checks
+cd web && npm run e2e                                    # 66 checks
 ```
 
 Needs `HERMES_CHECKOUT` and `HERMES_PYTHON` as above; it exits 2 with
@@ -67,12 +67,12 @@ instructions if they are missing. `CHROMIUM_PATH` overrides the browser binary.
 | Suite | Command | Result |
 |---|---|---|
 | Gateway typecheck | `npx tsc --noEmit` | clean |
-| Gateway tests | `npm test` | 49 passed, 0 failed, 0 skipped (9 files) |
+| Gateway tests | `npm test` | 78 passed, 0 failed, 0 skipped (10 files) |
 | Web typecheck + build | `npm run build` | clean; entry 27 kB, 9 kB gzipped |
-| Web tests | `npm test` | 70 passed (6 files) |
-| End-to-end | `npm run e2e` | 54 passed |
+| Web tests | `npm test` | 88 passed (7 files) |
+| End-to-end | `npm run e2e` | 66 passed |
 
-`npm run lint` in `gateway/` (prettier --check) fails on 25 files. It already
+`npm run lint` in `gateway/` (prettier --check) fails on 27 files. It already
 failed on 20 at the `a62fb16` checkpoint, before any of this work: the
 codebase's deliberate dense style does not match its own prettier config.
 Reformatting it is a separate decision, so new files follow the surrounding
@@ -92,7 +92,7 @@ Labels are the handoff's: **VERIFIED**, **BLOCKED ON OWNER CREDENTIAL**,
 | 5 | Hermes selection, Codex through Hermes, controlled fixture | Hermes: IMPLEMENTED + VERIFIED against the official runtime (hermes-agent 0.19.0) in a real subprocess. Codex: IMPLEMENTED + BLOCKED ON OWNER CREDENTIAL — only the credential boundary is verified (`parity.test.ts`), not the provider path |
 | 6 | SMS draft / approval / send / inbound status | Contract IMPLEMENTED + VERIFIED against fixtures (`communications.test.ts`): nothing reaches the provider before approval, the approval names the exact destination and text, a changed destination is refused, an uncertain send is never retried, and inbound webhooks are signature-checked, deduplicated and framed as untrusted. Live Twilio: BLOCKED ON OWNER CREDENTIAL |
 | 7 | Outbound call objective / status / transcript / outcome | Contract IMPLEMENTED + VERIFIED against fixtures (`communications.test.ts`): approval names the objective, the webhook is signature-verified, applied once across duplicates and refused when its timestamp is stale. Live Retell: BLOCKED ON OWNER CREDENTIAL |
-| 8 | Procurement comparison with timestamped offers | IMPLEMENTED + BLOCKED ON OWNER CREDENTIAL (eBay). Ownership, exact-quote and re-pricing rules verified in `permissions.test.ts`; a connector cannot expose its own checkout tools as ordinary tools (`adapters.test.ts`) |
+| 8 | Multi-supplier comparison with timestamped offers | IMPLEMENTED + VERIFIED against fixtures and end to end (`suppliers.test.ts`, `offers.test.ts`, e2e): every connected supplier is searched in parallel, one failing never erases the others, offers normalize into one model, a total is withheld when a component is unquoted, and the phone names who was not included. Live supplier accounts: BLOCKED ON OWNER CREDENTIAL |
 | 9 | Purchase approval blocks unauthorised checkout | IMPLEMENTED + VERIFIED (`permissions.test.ts`) — a decision is bound to the exact arguments, "always allow" is refused for financial effects, and cancelling during checkout preflight prevents the order |
 | 10 | Unauthorised access returns 403/404 without leaking | IMPLEMENTED + VERIFIED (e2e two-owner run, `http.test.ts`, `security.test.ts`) — a second signed-in owner sees none of the first's records, gets 404 for their task and artifact content, and cannot cancel their task |
 | 11 | Reconnect does not duplicate messages, calls or purchases | IMPLEMENTED + VERIFIED for run submission (idempotency key, e2e), for uncertain external effects (`permissions.test.ts`), for message sends (`communications.test.ts`: the provider is called once and never again on its own), and for the event stream (`realtime.test.ts`: reconnect resumes from the last event rather than replaying). Duplicate suppression against a live provider: BLOCKED ON OWNER CREDENTIAL |
@@ -106,7 +106,9 @@ Labels are the handoff's: **VERIFIED**, **BLOCKED ON OWNER CREDENTIAL**,
 | Anthropic Managed Agents | IMPLEMENTED + BLOCKED ON OWNER CREDENTIAL — preserved; governance (always_ask toolsets, listed reads only) and its unconfigured refusal verified in `parity.test.ts` |
 | Twilio SMS | Contract VERIFIED against fixtures; live account BLOCKED ON OWNER CREDENTIAL |
 | Retell voice | Contract VERIFIED against fixtures; live account BLOCKED ON OWNER CREDENTIAL |
-| eBay procurement | Contract VERIFIED against fixtures; live account BLOCKED ON OWNER CREDENTIAL |
+| Home Depot / Lowe's / Amazon / Walmart | Adapter, mapping, fulfillment and failure handling VERIFIED against fixtures; live accounts BLOCKED ON OWNER CREDENTIAL |
+| Local and specialty suppliers | VERIFIED — configured through `SUPPLIER_CONFIG_PATH` and exercised end to end against a live local endpoint |
+| eBay | Optional only; VERIFIED that it is not constructed unless `EBAY_ENABLED=true`, even with credentials present. Live account BLOCKED ON OWNER CREDENTIAL |
 | Browser Use | Approval gate, unconfigured refusal, cancel, cleanup and cross-owner safety VERIFIED; live account BLOCKED ON OWNER CREDENTIAL |
 | MCP connectors | Config handling, https-only, owner scoping, credential requirement and the checkout-tool prohibition VERIFIED; a live connector BLOCKED ON OWNER CREDENTIAL |
 | Deployment packaging | IMPLEMENTED + VERIFIED locally — the gateway serves the built PWA, warns when it is missing, and `/health` stays up. The container image is NOT built here: this sandbox has a docker client but no daemon |

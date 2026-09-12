@@ -45,7 +45,34 @@ cannot work.
   `${PUBLIC_BASE_URL}/webhooks/sms/status`.
 - **Phone calls**: Retell `RETELL_API_KEY`, `RETELL_FROM`, `RETELL_AGENT_ID`,
   with its webhook pointed at `${PUBLIC_BASE_URL}/webhooks/voice`.
-- **Shopping and materials**: eBay `EBAY_CLIENT_ID`, `EBAY_CLIENT_SECRET`.
+- **Suppliers**: each is independent, and a search asks every connected one at
+  once. Connect as few or as many as you want; the phone always says which were
+  searched and which were not.
+
+  | Supplier | Variables |
+  |---|---|
+  | Home Depot | `HOME_DEPOT_ENDPOINT`, `HOME_DEPOT_API_KEY` |
+  | Lowe's | `LOWES_ENDPOINT`, `LOWES_API_KEY` |
+  | Amazon | `AMAZON_ENDPOINT`, `AMAZON_API_KEY` |
+  | Walmart | `WALMART_ENDPOINT`, `WALMART_API_KEY` |
+  | Local and specialty | `SUPPLIER_CONFIG_PATH` plus each supplier's own credential variable |
+  | eBay (optional) | `EBAY_ENABLED=true`, `EBAY_CLIENT_ID`, `EBAY_CLIENT_SECRET` |
+
+  These catalogs are reached through partner entitlements rather than an open
+  URL, so the endpoint is yours to supply. Amazon's Product Advertising API and
+  Walmart I/O require signed requests; point their endpoint at the gateway you
+  are entitled to or at your own signing proxy, which may run on loopback beside
+  the gateway. The built-in field mappings for Home Depot and Lowe's are
+  defaults — confirm them against the endpoint you are granted, and override any
+  field through `SUPPLIER_CONFIG_PATH`.
+
+  eBay stays off unless `EBAY_ENABLED=true`; its credentials alone do not
+  connect it.
+
+  Local yards and specialty vendors are defined entirely in
+  `SUPPLIER_CONFIG_PATH`: an id, a display name, an https (or loopback)
+  endpoint, an auth variable, and where each normalized field lives in the
+  response. Nothing is hardcoded to a particular vendor.
 - **Browser use**: `BROWSER_USE_API_KEY`.
 - **Connected tools (MCP)**: per-server configuration and its credentials.
 - **Google sign-in**: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and

@@ -88,6 +88,13 @@ voice conversation when LiveKit is configured, live transcript and cards, typed
 tasks as a fallback that always works, task status with evidence, approvals for
 anything that spends or sends, and the employee's memory and contacts.
 
+Materials are priced across every supplier you connect -- Home Depot, Lowe's,
+Amazon, Walmart, and any local yard or specialty vendor you configure -- searched
+in parallel and compared in one model. The phone always says which suppliers
+answered, which did not, and when each price was checked, so a short list is
+never mistaken for the market. Nothing is bought without you authorising an
+exact quote.
+
 The camera and microphone need an HTTPS origin -- browsers do not expose them
 otherwise -- and voice needs the `agent/` worker and LiveKit credentials. Typing,
 photos and tasks work without either.
