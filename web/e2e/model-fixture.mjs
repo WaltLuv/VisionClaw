@@ -3,6 +3,8 @@
 // model's wording. No provider credential is involved.
 import {createServer} from 'node:http';
 
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
 const reply = (task, alreadyCalledTool) => {
   if (alreadyCalledTool) return {role: 'assistant', content: 'Done. The note is saved as task evidence.'};
   if (/\bnote\b|\bdocument\b/i.test(task)) {
@@ -24,6 +26,9 @@ export function startModelFixture() {
     const input = JSON.parse(body || '{}');
     const messages = input.messages ?? [];
     const task = messages.filter(m => m.role === 'user').map(m => (typeof m.content === 'string' ? m.content : JSON.stringify(m.content))).join(' ');
+    // A task the caller asked to take a while, so cancellation and surviving a
+    // disconnect have something in flight to act on.
+    if (/\bslowly\b/i.test(task)) await sleep(Number(process.env.E2E_SLOW_MS ?? 8000));
     const message = reply(task, messages.some(m => m.role === 'tool'));
     const finish = message.tool_calls ? 'tool_calls' : 'stop';
     if (input.stream) {
