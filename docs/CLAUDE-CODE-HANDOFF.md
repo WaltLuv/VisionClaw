@@ -156,3 +156,23 @@ Put only genuine external prerequisites in docs/OWNER-ACTIONS.md, such as:
 ## Final handoff
 
 Before stopping, run lint, typecheck, unit/integration tests, web build, secret scan, and applicable E2E tests. Review git diff for TODO/FIXME/HACK, stale OpenClaw terminology and hardcoded secrets. Update README/docs/SETUP.md/docs/SECURITY.md/docs/TESTING.md/docs/OWNER-ACTIONS.md. Commit logical changes directly to main and report exact commit SHAs, verified tests, blocked tests and known limitations. Never report “build complete” while the PWA, deployment, or required provider paths remain unverified.
+
+
+## New binding procurement requirement
+
+eBay is not a launch supplier and must not be the default procurement provider. The launch procurement target is multi-supplier support for:
+
+- Home Depot
+- Lowe's
+- Amazon
+- Walmart
+- configurable local suppliers
+- configurable specialty vendors
+
+Implement a provider-neutral supplier registry and normalized offer model. Search should fan out to all connected suppliers, compare exact match/specification, quantity, price, shipping, pickup, inventory, delivery estimate, supplier and timestamp, and clearly mark partial/unavailable providers.
+
+Use official APIs/partner APIs where available. Where a supplier has no suitable consumer API, use an approved Browserbase/Stagehand or MCP adapter with user-authorized sessions, respecting supplier terms. Do not fabricate checkout or availability. Local and specialty suppliers must be configurable rather than hardcoded into one retailer.
+
+eBay may remain only as an optional adapter behind an explicit connection flag. It must not be the default, the only provider, or the headline acceptance path.
+
+Add fixture tests for every supplier adapter, connection failure/partial result handling, offer normalization, price/availability timestamps, cart creation, exact quote revalidation and approval-gated checkout. Live provider verification remains blocked until the required owner credentials/accounts are supplied, but the adapters and configuration must exist before launch.
