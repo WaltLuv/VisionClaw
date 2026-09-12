@@ -1,6 +1,11 @@
 import {spawn} from 'node:child_process';import {createInterface} from 'node:readline';import {mkdirSync,existsSync} from 'node:fs';import path from 'node:path';import {createHash} from 'node:crypto';import {fileURLToPath} from 'node:url';
 import {Store,type Row} from './db.js';import {ToolGateway} from './tools.js';import {employeeContext} from './capabilities.js';import {selectedImages} from './artifacts.js';import {dataDir} from './config.js';
 export interface AgentProvider{run(owner:string,run:Row,signal:AbortSignal):Promise<{result:string}>}
+/** Which runtime runs this task. Server-side only: the caller never names it -- executeSchema drops
+ * unknown fields -- and the choice is the owner's own profile. A run that already started keeps the
+ * runtime recorded on it, so a resumed task never silently changes engine mid-flight. Anything that
+ * is not a known runtime resolves to the preserved default rather than indexing into nothing. */
+export function selectRuntime(profile:Row|undefined,run:Row):'hermes'|'anthropic'{return (run.runtime??profile?.runtime)==='hermes'?'hermes':'anthropic';}
 export function hermesHome(owner:string){return path.join(dataDir(),'hermes',createHash('sha256').update(owner).digest('hex'));}
 export class HermesProvider implements AgentProvider{
  constructor(readonly db:Store,readonly tools:ToolGateway,readonly bridge=fileURLToPath(new URL('../../../hermes/bridge.py',import.meta.url))){}
