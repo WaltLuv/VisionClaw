@@ -11,7 +11,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "verify": "npm run build && vitest run",
-    "e2e": "node e2e/run.mjs"
+    "e2e": "node e2e/run.mjs",
+    "build:demo": "vite build --config demo/vite.config.ts"
   },
   "dependencies": {
     "livekit-client": "^2.9.0"

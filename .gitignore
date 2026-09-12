@@ -18,6 +18,7 @@ samples/CameraAccessAndroid/local.properties
 !**/.env.example
 **/data/
 web/dist/
+web/demo-dist/
 **/.venv/
 **/__pycache__/
 **/*.sqlite*
