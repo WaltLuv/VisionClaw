@@ -69,6 +69,37 @@ The first screen asks for an access code. The code is not something the author i
 
 Details for the gateway, tokens and app connections: [gateway/README.md](gateway/README.md).
 
+## Quick Start (phone, no install)
+
+The gateway serves a phone-first web app, so the fastest way in is a browser --
+no Xcode, no Android Studio, no glasses.
+
+```bash
+cd gateway && npm ci && cp .env.example .env   # set GATEWAY_TOKENS
+cd ../web && npm ci && npm run build
+cd ../gateway && npm start
+```
+
+Open the gateway's URL on your phone and sign in with the access code above.
+"Add to home screen" installs it like an app.
+
+You get the camera with front/rear switching, freeze-frame and photo capture, a
+voice conversation when LiveKit is configured, live transcript and cards, typed
+tasks as a fallback that always works, task status with evidence, approvals for
+anything that spends or sends, and the employee's memory and contacts.
+
+The camera and microphone need an HTTPS origin -- browsers do not expose them
+otherwise -- and voice needs the `agent/` worker and LiveKit credentials. Typing,
+photos and tasks work without either.
+
+Setup and environment: [docs/SETUP.md](docs/SETUP.md). How to run the tests and
+what is actually verified: [docs/TESTING.md](docs/TESTING.md). Boundaries and
+what enforces them: [docs/SECURITY.md](docs/SECURITY.md). What still needs a
+credential you have to supply: [docs/OWNER-ACTIONS.md](docs/OWNER-ACTIONS.md).
+
+The native apps below remain the way to use Ray-Ban Meta glasses, and share the
+same gateway, employee, tasks and memory as the phone.
+
 ## Quick Start (iOS)
 
 ### 1. Clone and open

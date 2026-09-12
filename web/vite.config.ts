@@ -15,5 +15,5 @@ export default defineConfig({
   },
   // Same-origin gateway during local development, so the PWA never needs CORS
   // or a second backend.
-  server: {proxy: Object.fromEntries(['/api', '/livekit-token', '/health'].map(p => [p, {target: 'http://127.0.0.1:8080', changeOrigin: true}]))},
+  server: {proxy: Object.fromEntries(['/api', '/livekit-token', '/health'].map(p => [p, {target: 'http://127.0.0.1:8788', changeOrigin: true}]))},
 });

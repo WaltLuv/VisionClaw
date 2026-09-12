@@ -2,10 +2,53 @@
 
 In progress. Not production complete and not deployed.
 
-Upstream baseline is preserved. The first unpushed implementation was removed by workspace maintenance and is being reconstructed with the independent review findings applied. Do not treat past tests as proof of this checkout.
+The phone client now exists and is served by the gateway; the Hermes runtime
+path works against the official runtime; deployment builds and ships both.
+Nothing here has run against live commercial providers or a physical phone.
 
-Review regressions to verify: voice result delivery and image handoff; cancelled checkout; tenant-scoped supplier quotes; per-tool Managed permission overrides; custom tool result/idle event ordering; browser session revocation; restart reconciliation; persisted volume paths; PWA packaging and content security policy compatibility.
+Exact commands, results and per-criterion labels are in `docs/TESTING.md`.
 
-2026-09-09 checkpoint: gateway TypeScript check passes. All 12 gateway tests pass, including a real installed Hermes subprocess using a local OpenAI-compatible streaming model fixture, exact approval/cancel/ownership rules, real HTTP login/CSRF/image delegation/SSE, restart recovery, and scheduled work progressing while another owner has a long task. These are not live commercial-provider or phone-hardware acceptance results. Python 3.11 was restored after the earlier workspace interruption removed its executable.
+## Verified in this checkout
 
-Hermes tool search is explicitly disabled using its supported per-user configuration so only gateway-governed tools are exposed. Anthropic remains the default pending live parity. Phone PWA work is underway; it is not yet built or deployed. Communications, supplier, MCP, and browser adapters still need their complete fixture/security matrix and live account verification.
+- Gateway typecheck clean; **28/28 tests pass, 0 skipped** (was 12 with 1
+  skipped, and the skipped one failed when first actually run).
+- Web client typechecks and builds; **40/40 tests pass**.
+- **23/23 end-to-end checks pass** against a real gateway in a real browser at a
+  phone viewport: sign-in, a typed task and an attached image both running
+  through the gateway to Hermes and a governed tool, evidence stored and shown,
+  idempotent resubmission, CSRF rejection, and server-side sign-out.
+
+## Fixed since the last checkpoint
+
+- **The Hermes path could not have worked.** The bridge passed
+  `skip_background_review=True` to `AIAgent()`, which is not a parameter of the
+  official runtime, so every Hermes run died with a `TypeError`. The test that
+  would have caught it skips unless `HERMES_CHECKOUT` is set, so the previous
+  "all 12 tests pass including a real Hermes subprocess" could not be reproduced
+  here. Runtime under test is now pinned and named: **hermes-agent 0.19.0**.
+- **The phone client did not exist.** `server.ts` had always served
+  `web/dist`, but `web/` was absent from this checkout and from the entire branch
+  history. It is rebuilt from the gateway's own route contracts.
+- **The client could never have shipped.** The Dockerfile did not include
+  `web/` in its build context, and the static path resolved outside the image
+  root, so a deployed gateway answered `/` with 404 while its API worked.
+- **Secrets were not redacted anywhere.** No redaction existed in the gateway;
+  provider error text reached API clients verbatim.
+- Runtime selection was inline and untestable, and an unrecognised value would
+  fail a run with a `TypeError` instead of falling back.
+
+## Still open
+
+- Live camera, microphone and realtime conversation need a physical phone and
+  LiveKit plus realtime model credentials.
+- Communications, voice, procurement, browser and MCP adapters are implemented
+  and fixture-tested; none has run against a live account.
+- The Codex-through-Hermes provider path is unverified beyond its credential
+  boundary.
+- The container image is not built here: this sandbox has a docker client but no
+  daemon.
+- `npm run lint` in `gateway/` fails on 23 files. It already failed on 20 at the
+  `a62fb16` checkpoint; the codebase's dense style does not match its own
+  prettier config, and reformatting is a separate decision.
+- `gateway/package.json` declares `engines: >=24` while the tree is tested and
+  imaged on Node 22, so `npm ci` prints `EBADENGINE`.
