@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "verify": "npm run build && vitest run"
+    "verify": "npm run build && vitest run",
+    "e2e": "node e2e/run.mjs"
   },
   "dependencies": {
     "livekit-client": "^2.9.0"
