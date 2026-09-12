@@ -1,16 +1,37 @@
 import {api} from '../api';
 import {h} from '../dom';
+import {ACCESS_METHOD_LABEL} from '../store';
 import type {Ctx} from './ctx';
+
+/**
+ * Suppliers are a list, not a single on/off capability. Which ones are
+ * connected decides how complete any price comparison can be, so the set is
+ * shown plainly rather than reduced to "shopping: ready".
+ */
+function suppliersCard(ctx: Ctx): HTMLElement {
+  const suppliers = ctx.connections?.suppliers ?? [];
+  const connected = suppliers.filter(s => s.connected);
+  return h('section', {class: 'card'},
+    h('h3', {text: 'Suppliers'}),
+    h('p', {class: 'note', text: connected.length
+      ? `${connected.length} of ${suppliers.length} connected. Every search asks all connected suppliers at once.`
+      : 'No suppliers connected yet. Prices cannot be compared until at least one is.'}),
+    ...suppliers.map(s => h('div', {class: 'row-item'},
+      h('p', {class: 'task', text: s.name}),
+      h('span', {class: `pill ${s.connected ? 'ok' : 'warn'}`, text: s.connected ? ACCESS_METHOD_LABEL[s.method] : 'Not connected'}),
+      s.connected ? null : h('p', {class: 'note', text: `Needs ${s.requires.join(', ')}`}))),
+  );
+}
 
 // Capabilities are described by what they let the employee do. Provider and
 // model names stay out of the product surface: which engine runs the work is a
 // server-side decision, and naming vendors here would invite the impression it
 // is a user setting.
-const CAPABILITIES: {key: 'realtime' | 'sms' | 'voice' | 'products' | 'browser'; label: string; blurb: string}[] = [
+const CAPABILITIES: {key: 'realtime' | 'sms' | 'voice' | 'browser'; label: string; blurb: string}[] = [
   {key: 'realtime', label: 'Voice and camera conversation', blurb: 'Talk to it and let it see what you see.'},
   {key: 'sms', label: 'Text messages', blurb: 'Drafts a message and sends it only after you approve.'},
   {key: 'voice', label: 'Phone calls', blurb: 'Places a call with an objective you approve first.'},
-  {key: 'products', label: 'Shopping and materials', blurb: 'Compares real offers. Buying needs your authorisation.'},
+
   {key: 'browser', label: 'Using a browser', blurb: 'Works through sites on your behalf, with the session under your control.'},
 ];
 
@@ -42,6 +63,7 @@ export function settings(ctx: Ctx): HTMLElement {
       // not something the person did, so it is phrased that way.
       c?.mcpError ? h('p', {class: 'note', text: 'Some connected tools are misconfigured on the server.'}) : null,
     ),
+    suppliersCard(ctx),
     h('section', {class: 'card'},
       h('h3', {text: 'Account'}),
       h('div', {class: 'row wrap'},

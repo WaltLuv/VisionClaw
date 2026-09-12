@@ -22,18 +22,38 @@ export interface Contact extends Row {name?: string}
 export interface Workflow extends Row {name: string; task: string; scheduledAt?: string; enabled: boolean}
 export interface Action extends Row {runId: string; name: string; status: string; effect: Effect}
 
+export type AccessMethod = 'official_api' | 'partner_api' | 'mcp' | 'browser' | 'manual';
+export type SupplierStatus = 'ok' | 'failed' | 'unconfigured' | 'timeout';
+
+/** How one supplier answered a search, so a short list is never mistaken for a complete one. */
+export interface SupplierReport {id: string; name: string; method: AccessMethod; status: SupplierStatus; offers: number; checkedAt: string; detail?: string}
+export interface SupplierConnection {id: string; name: string; method: AccessMethod; connected: boolean; requires: string[]}
+
+export interface Fulfillment {available: boolean | null; eta: string; location: string}
+export interface Offer extends Row {
+  requestId?: string; supplierId: string; supplier: string; method: AccessMethod;
+  sku: string; product: string; url: string; specification: string;
+  quantity: number; unitPrice: number; currency: string;
+  shipping: number | null; tax: number | null; fees: number | null;
+  inventory: number | null; availability: string;
+  pickup: Fulfillment; delivery: Fulfillment;
+  observedAt: string; matchQuality: 'unverified' | 'candidate' | 'exact'; confidence: number;
+}
+export interface Material extends Row {description: string; specification: string; quantity: number; currency: string; runId?: string; suppliers?: SupplierReport[]; searchedAt?: string}
+
 export interface State {
   run: Run[]; agent: Agent[]; skill: Skill[]; memory: Memory[]; conversation: Row[]; message: Row[];
-  approval: Approval[]; artifact: Artifact[]; contact: Contact[]; communication: Row[]; offer: Row[];
-  cart: Row[]; quote: Row[]; order: Row[]; workflow: Workflow[]; computer: Row[]; policy: Row[];
-  action: Action[]; evidence_link: Row[];
+  approval: Approval[]; artifact: Artifact[]; contact: Contact[]; communication: Row[];
+  material: Material[]; offer: Offer[]; cart: Row[]; quote: Row[]; order: Row[];
+  workflow: Workflow[]; computer: Row[]; policy: Row[]; action: Action[]; evidence_link: Row[];
 }
 
 // What the gateway has credentials for. Used to disable surfaces honestly
 // instead of showing controls that cannot work.
 export interface Connections {
   realtime: boolean; hermes: boolean; anthropic: boolean; sms: boolean; voice: boolean;
-  products: boolean; browser: boolean; mcp: {id: string; tools: string[]}[]; mcpError?: string;
+  products: boolean; browser: boolean; suppliers: SupplierConnection[];
+  mcp: {id: string; tools: string[]}[]; mcpError?: string;
 }
 
 export class ApiError extends Error {

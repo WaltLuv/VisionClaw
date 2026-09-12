@@ -6,7 +6,34 @@ import {mkdtempSync, rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
+import {createServer} from 'node:http';
+import {writeFileSync} from 'node:fs';
 import {startModelFixture} from './model-fixture.mjs';
+
+/**
+ * Two owner-configured suppliers: one that answers and one that does not. The
+ * pair is what makes a partial comparison real rather than asserted -- the
+ * gateway has to keep the working supplier's offers and report the broken one.
+ */
+function startSupplierFixture() {
+  const server = createServer((req, res) => {
+    res.setHeader('Content-Type', 'application/json');
+    if (req.url?.startsWith('/northside')) {res.statusCode = 500; res.end('{"error":"down"}'); return;}
+    res.end(JSON.stringify({results: [
+      {code: 'RS-118', title: 'M6 bolt 20-pack stainless', link: 'https://riverside.example.test/p/RS-118', price: 7.4, ship: 0, taxes: 0.59, stock: 36, status: 'In stock', pickup: true, store: 'Riverside yard', pickupEta: 'Ready today', delivers: true, deliveryEta: 'Thu, 5 Jun'},
+      {code: 'RS-992', title: 'M6 bolt assorted tub', link: 'https://riverside.example.test/p/RS-992', price: 21.5, ship: 4.5, taxes: 1.72, stock: 4, status: 'Low stock', pickup: false, delivers: true, deliveryEta: 'Fri, 6 Jun'},
+    ]}));
+  });
+  server.listen(0);
+  return new Promise(resolve => server.on('listening', () => resolve({server, port: server.address().port})));
+}
+
+const supplierMapping = {
+  items: 'results', sku: 'code', product: 'title', url: 'link', unitPrice: 'price',
+  shipping: 'ship', tax: 'taxes', fees: '', inventory: 'stock', availability: 'status',
+  pickupAvailable: 'pickup', pickupLocation: 'store', pickupEta: 'pickupEta',
+  deliveryAvailable: 'delivers', deliveryEta: 'deliveryEta', specification: '',
+};
 
 export const root = path.resolve(fileURLToPath(new URL('../..', import.meta.url)));
 const require = createRequire(path.join(root, 'gateway/package.json'));
@@ -40,6 +67,16 @@ export async function waitFor(fn, label, timeout = 45000, interval = 750) {
 export async function startStack({port, tokens}) {
   const dataDir = mkdtempSync(path.join(tmpdir(), 'vc-e2e-'));
   const model = await startModelFixture();
+  const supplier = await startSupplierFixture();
+  const supplierConfig = path.join(dataDir, 'suppliers.json');
+  writeFileSync(supplierConfig, JSON.stringify([
+    {id: 'riverside_supply', name: 'Riverside Building Supply', method: 'partner_api',
+     endpoint: `http://127.0.0.1:${supplier.port}/riverside?q={query}`,
+     auth: {type: 'bearer', env: 'RIVERSIDE_TOKEN'}, mapping: supplierMapping},
+    {id: 'northside_lumber', name: 'Northside Lumber', method: 'partner_api',
+     endpoint: `http://127.0.0.1:${supplier.port}/northside?q={query}`,
+     auth: {type: 'bearer', env: 'NORTHSIDE_TOKEN'}, mapping: supplierMapping},
+  ]));
   const gateway = spawn('node', ['--import', 'tsx', 'src/server.ts'], {
     cwd: path.join(root, 'gateway'),
     env: {
@@ -55,6 +92,13 @@ export async function startStack({port, tokens}) {
       HERMES_BASE_URL: `http://127.0.0.1:${model.port}/v1`,
       HERMES_API_KEY: 'fixture-only',
       ANTHROPIC_API_KEY: '',
+      SUPPLIER_CONFIG_PATH: supplierConfig,
+      RIVERSIDE_TOKEN: 'fixture-only',
+      NORTHSIDE_TOKEN: 'fixture-only',
+      SUPPLIER_TIMEOUT_MS: '4000',
+      // eBay must stay out of the search even with this whole stack running.
+      EBAY_CLIENT_ID: 'fixture-only',
+      EBAY_CLIENT_SECRET: 'fixture-only',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -71,6 +115,7 @@ export async function startStack({port, tokens}) {
     async stop() {
       gateway.kill('SIGKILL');
       model.server.close();
+      supplier.server.close();
       rmSync(dataDir, {recursive: true, force: true});
     },
   };

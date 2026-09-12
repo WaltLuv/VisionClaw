@@ -39,6 +39,7 @@ try {
   await scenario.cameraAndMicrophone(ctx);
   await scenario.attachmentRules(ctx);
   await scenario.realtimeDegradesHonestly(ctx);
+  await scenario.procurementComparison(ctx);
   await scenario.approvalGate(ctx);
   await scenario.cancellation(ctx);
   await scenario.survivesDisconnect(ctx);

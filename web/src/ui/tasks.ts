@@ -1,6 +1,7 @@
 import {api, type Run} from '../api';
 import {h} from '../dom';
 import {canResume, isTerminal, relativeTime, runArtifacts, sortRuns, STATUS_LABEL, unreconciledActions} from '../store';
+import {materialSection} from './offers';
 import type {Ctx} from './ctx';
 
 export function tasks(ctx: Ctx): HTMLElement {
@@ -18,6 +19,9 @@ function taskCard(ctx: Ctx, run: Run): HTMLElement {
     run.result ? h('p', {class: 'result-text', text: run.result}) : null,
     run.error ? h('p', {class: 'note', text: run.error}) : null,
     stuck.length ? reconcilePanel(ctx, stuck[0]!.id) : null,
+    // A supplier comparison belongs with the task that asked for it, so the
+    // request, the prices and who was searched read as one thing.
+    ...ctx.state.material.filter(m => m.runId === run.id).map(m => materialSection(m, ctx.state.offer.filter(o => o.requestId === m.id))),
     evidence.length ? h('div', {class: 'row wrap'}, ...evidence.map(a =>
       // Evidence opens in a new tab; the gateway serves it sandboxed with a
       // no-script CSP of its own, so an uploaded file cannot run in this origin.

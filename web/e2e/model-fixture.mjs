@@ -10,6 +10,9 @@ const reply = (task, alreadyCalledTool) => {
   if (/\bnote\b|\bdocument\b/i.test(task)) {
     return {role: 'assistant', content: null, tool_calls: [{index: 0, id: 'call-1', type: 'function', function: {name: 'document_create', arguments: JSON.stringify({name: 'Site note', text: 'Two boxes of M6 bolts are left on the shelf.'})}}]};
   }
+  if (/\bprice\b|\bsuppliers?\b/i.test(task)) {
+    return {role: 'assistant', content: null, tool_calls: [{index: 0, id: 'call-1', type: 'function', function: {name: 'products_search', arguments: JSON.stringify({description: 'M6 bolt 20-pack', quantity: 2})}}]};
+  }
   if (/\bask\b|\bmissing\b/i.test(task)) {
     return {role: 'assistant', content: null, tool_calls: [{index: 0, id: 'call-1', type: 'function', function: {name: 'ask_user', arguments: JSON.stringify({question: 'Which room should I use?'})}}]};
   }

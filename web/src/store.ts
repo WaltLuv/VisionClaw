@@ -3,15 +3,15 @@
 // judgement (is this approval still actionable? is this run finished?) cannot
 // drift between two screens.
 
-import type {Action, Approval, Artifact, Connections, Run, RunStatus, State} from './api';
+import type {AccessMethod, Action, Approval, Artifact, Connections, Fulfillment, Offer, Run, RunStatus, State, SupplierReport, SupplierStatus} from './api';
 import type {Card, TranscriptEntry} from './realtime';
 
 export const TERMINAL: ReadonlySet<RunStatus> = new Set(['completed', 'failed', 'cancelled']);
 
 export const emptyState = (): State => ({
   run: [], agent: [], skill: [], memory: [], conversation: [], message: [], approval: [],
-  artifact: [], contact: [], communication: [], offer: [], cart: [], quote: [], order: [],
-  workflow: [], computer: [], policy: [], action: [], evidence_link: [],
+  artifact: [], contact: [], communication: [], material: [], offer: [], cart: [], quote: [],
+  order: [], workflow: [], computer: [], policy: [], action: [], evidence_link: [],
 });
 
 export const STATUS_LABEL: Record<RunStatus, string> = {
@@ -135,3 +135,64 @@ export function applyCard(list: Card[], card: Card): Card[] {
 }
 
 export const dismissCard = (list: Card[], uuid: string): Card[] => list.filter(c => c.uuid !== uuid);
+
+// --- procurement ----------------------------------------------------------
+
+/**
+ * A total is only shown when every component the supplier owed us is present.
+ * Adding up what we happen to know and calling it the total is how a person
+ * ends up comparing a shipped price against an unshipped one.
+ */
+export function offerTotal(offer: Offer): {subtotal: number; total: number | null} {
+  const subtotal = Math.round(offer.unitPrice * offer.quantity * 100) / 100;
+  const {shipping, tax, fees} = offer;
+  if (shipping === null || tax === null || fees === null) return {subtotal, total: null};
+  return {subtotal, total: Math.round((subtotal + shipping + tax + fees) * 100) / 100};
+}
+
+export const money = (amount: number, currency: string) => {
+  try {return new Intl.NumberFormat(undefined, {style: 'currency', currency}).format(amount);}
+  catch {return `${amount.toFixed(2)} ${currency}`;}
+};
+
+/** "Not reported" and "not available" are different answers and must not read alike. */
+export function fulfillmentLabel(f: Fulfillment | undefined, channel: 'Pickup' | 'Delivery'): string {
+  if (!f || f.available === null) return `${channel}: not reported`;
+  if (!f.available) return `${channel}: not available`;
+  return [`${channel}`, f.location, f.eta].filter(Boolean).join(' · ');
+}
+
+export const MATCH_LABEL: Record<Offer['matchQuality'], string> = {
+  exact: 'Matches your description',
+  candidate: 'Possible match — check before buying',
+  unverified: 'Weak match — check before buying',
+};
+
+export const SUPPLIER_STATUS_LABEL: Record<SupplierStatus, string> = {
+  ok: 'Searched',
+  failed: "Didn't answer",
+  timeout: 'Too slow to answer',
+  unconfigured: 'Not connected',
+};
+
+/** What a person needs to know before trusting a comparison: how much of it is missing. */
+export function supplierSummary(reports: SupplierReport[] | undefined) {
+  const list = reports ?? [];
+  const answered = list.filter(r => r.status === 'ok');
+  const missing = list.filter(r => r.status !== 'ok');
+  return {
+    total: list.length,
+    answered: answered.length,
+    missing,
+    complete: list.length > 0 && missing.length === 0,
+    checkedAt: answered.map(r => r.checkedAt).sort().at(-1),
+  };
+}
+
+export const ACCESS_METHOD_LABEL: Record<AccessMethod, string> = {
+  official_api: 'Supplier API',
+  partner_api: 'Partner catalog',
+  mcp: 'Connected tool',
+  browser: 'Browser',
+  manual: 'Manual connection',
+};

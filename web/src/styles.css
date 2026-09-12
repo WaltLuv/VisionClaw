@@ -104,3 +104,16 @@ button:disabled { opacity: .55; cursor: default; }
   .toast { animation: rise .18s ease-out; }
   @keyframes rise { from { opacity: 0; transform: translate(-50%, 8px); } to { opacity: 1; transform: translate(-50%, 0); } }
 }
+
+/* Supplier comparison. The incomplete-search warning is deliberately louder
+   than the prices: a short list that looks complete is the failure to avoid. */
+.warn-line { margin: 0; color: #f0b429; font-size: .88rem; }
+.offer { border: 1px solid var(--line); border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 6px; background: var(--panel-2); }
+.offer.exact { border-color: #2f6b45; }
+.offer .supplier { font-weight: 650; }
+.offer .product { margin: 0; }
+.offer .big { margin: 2px 0; font-size: 1.5rem; }
+.offer .chip { align-self: flex-start; }
+.terms-lines { display: flex; flex-direction: column; }
+.terms-lines .row-item { padding: 4px 0; border-bottom: 0; font-size: .9rem; }
+.terms-lines .row-item .task { flex: 1 1 auto; color: var(--muted); }

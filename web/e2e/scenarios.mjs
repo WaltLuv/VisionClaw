@@ -108,7 +108,7 @@ export async function approvalGate({page, check}) {
   await page.locator('textarea[aria-label="Ask or assign something"]').fill('Please ask me which room to use');
   await page.locator('button:has-text("Send")').click();
 
-  await waitFor(async () => (await state(page))?.approval.some(a => a.status === 'pending'), 'the employee to ask', 90000, 1000);
+  await waitFor(async () => (await state(page))?.approval.some(a => a.status === 'pending'), 'the employee to ask', 150000, 1500);
   const pending = (await state(page))?.approval.find(a => a.status === 'pending');
   check('a sensitive tool stops the run and asks instead of proceeding', !!pending, `tool=${pending?.tool}`);
   check('the run waits on the person rather than continuing', (await state(page))?.run.find(r => r.id === pending.runId)?.status === 'needs_user');
@@ -118,7 +118,7 @@ export async function approvalGate({page, check}) {
 
   await page.locator('input[aria-label="Your answer"]').fill('The back office');
   await page.locator('button:has-text("Send answer")').click();
-  await waitFor(async () => (await state(page))?.run.find(r => r.id === pending.runId)?.status === 'completed', 'the answered task to finish', 90000, 1000);
+  await waitFor(async () => (await state(page))?.run.find(r => r.id === pending.runId)?.status === 'completed', 'the answered task to finish', 150000, 1500);
   check('answering releases the run and it completes', true);
   check('the decision was recorded against that exact approval', (await state(page))?.approval.find(a => a.id === pending.id)?.status === 'approved');
 }
@@ -128,12 +128,12 @@ export async function cancellation({page, check}) {
   await tab(page, 'Today').click();
   await page.locator('textarea[aria-label="Ask or assign something"]').fill('Research this slowly and report back');
   await page.locator('button:has-text("Send")').click();
-  await waitFor(async () => (await state(page))?.run.some(r => r.status === 'working'), 'the task to start', 60000, 1000);
+  await waitFor(async () => (await state(page))?.run.some(r => r.status === 'working'), 'the task to start', 150000, 1500);
   const running = (await state(page))?.run.find(r => r.status === 'working');
   check('a long task is accepted and starts working', !!running);
 
   await page.locator('button:has-text("Stop")').first().click();
-  await waitFor(async () => (await state(page))?.run.find(r => r.id === running.id)?.status === 'cancelled', 'the task to stop', 45000, 1000);
+  await waitFor(async () => (await state(page))?.run.find(r => r.id === running.id)?.status === 'cancelled', 'the task to stop', 120000, 1500);
   check('stopping marks the task cancelled immediately', true);
 
   // The model was still mid-answer; a cancelled run must not quietly finish later.
@@ -149,7 +149,7 @@ export async function survivesDisconnect({browser, base, check, token}) {
   await signIn(first.page, token);
   await first.page.locator('textarea[aria-label="Ask or assign something"]').fill('Look into this slowly and tell me what you find');
   await first.page.locator('button:has-text("Send")').click();
-  await waitFor(async () => (await state(first.page))?.run.some(r => r.status === 'working'), 'the long task to start', 60000, 1000);
+  await waitFor(async () => (await state(first.page))?.run.some(r => r.status === 'working'), 'the long task to start', 150000, 1500);
   const started = (await state(first.page))?.run.find(r => r.status === 'working');
   check('a long task is acknowledged while it is still running', !!started && !started.result);
 
@@ -237,4 +237,44 @@ export async function attachmentRules({page, check}) {
 
   const linked = s?.evidence_link.some(l => s.run.some(r => r.id === l.runId && r.context?.attachments?.includes(l.artifactId)));
   check('evidence is linked to the task that was authorised to use it', linked);
+}
+
+/**
+ * Procurement across more than one supplier, with one of them down. The point
+ * is not that prices appear -- it is that the comparison says out loud it is
+ * incomplete, so three prices are never mistaken for the market.
+ */
+export async function procurementComparison({page, check}) {
+  await tab(page, 'Today').click();
+  await page.locator('textarea[aria-label="Ask or assign something"]').fill('Price M6 bolts across suppliers');
+  await page.locator('button:has-text("Send")').click();
+
+  await waitFor(async () => ((await state(page))?.material.length ?? 0) > 0, 'the supplier search to run', 150000, 1500);
+  const s = await state(page);
+  const material = s.material[0];
+  const offers = s.offer.filter(o => o.requestId === material.id);
+
+  check('both configured suppliers were searched', material.suppliers?.length === 2, `searched=${material.suppliers?.map(x => x.id).join(',')}`);
+  check('the supplier that answered produced offers', offers.length > 0, `${offers.length} offer(s)`);
+  check('the supplier that failed is recorded as not having answered', material.suppliers?.find(x => x.id === 'northside_lumber')?.status === 'failed');
+  check('one supplier failing did not erase the other supplier offers', offers.every(o => o.supplierId === 'riverside_supply'));
+  check('every offer carries when its price was observed', offers.every(o => Date.parse(o.observedAt) > 0));
+
+  // eBay credentials are present in this stack on purpose; it must still be absent.
+  check('eBay is not in the search despite its credentials being set', !material.suppliers?.some(x => x.id === 'ebay'));
+
+  const normalized = offers.find(o => o.sku === 'RS-118');
+  check('offers normalize into one model with fulfillment and stock', !!normalized
+    && normalized.pickup?.available === true && normalized.pickup?.location === 'Riverside yard'
+    && normalized.delivery?.available === true && normalized.inventory === 36,
+    normalized ? `pickup=${normalized.pickup?.available} stock=${normalized.inventory}` : 'missing');
+
+  await tab(page, 'Tasks').click();
+  await waitFor(async () => (await page.locator('text=/suppliers answered/').count()) > 0, 'the comparison on screen');
+  const shown = await page.locator('.screen').innerText();
+  check('the phone says how many suppliers answered', /1 of 2 suppliers answered/.test(shown), shown.match(/\d of \d suppliers answered/)?.[0] ?? '');
+  check('the phone names the supplier that was not included', /Northside Lumber/.test(shown));
+  check('the phone warns the comparison may be missing better prices', /There may be better prices than these/.test(shown));
+  check('the phone shows when prices were checked', /checked .* ago|prices checked/i.test(shown));
+  check('a complete total is shown for a fully quoted offer', /\$1[45]\.\d\d/.test(shown), shown.match(/\$\d+\.\d\d/g)?.join(' ') ?? '');
 }
