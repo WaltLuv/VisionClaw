@@ -34,7 +34,11 @@ def main():
             provider=request.get('provider') or None, model=request.get('model') or '',
             base_url=request.get('baseUrl') or None, api_key=request.get('apiKey') or None,
             enabled_toolsets=['visionclaw'], quiet_mode=True, verbose_logging=False,
-            skip_memory=True, skip_context_files=True, skip_background_review=True,
+            # Background memory/skill review is not a constructor flag in the
+            # official runtime. It only spawns when "memory" or "skill_manage"
+            # is in agent.valid_tool_names, so skip_memory plus the single
+            # gateway toolset below already keep it from ever running.
+            skip_memory=True, skip_context_files=True,
             save_trajectories=False, max_iterations=40,
             ephemeral_system_prompt=request['instructions'], session_id=request['sessionId'],
         )
