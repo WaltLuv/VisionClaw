@@ -19,10 +19,10 @@ export async function session({page, context, check, token}) {
 }
 
 export async function governedTask({page, check}) {
-  await page.locator('textarea[aria-label="Ask or assign something"]').fill('Write a note about the shelf');
+  await page.locator('textarea[aria-label="Tell it what you need"]').fill('Write a note about the shelf');
   await page.locator('button:has-text("Send")').click();
   await waitFor(async () => {
-    await tab(page, 'Tasks').click();
+    await tab(page, 'History').click();
     return (await page.locator('text=Done').count()) > 0;
   }, 'the task to finish', 90000);
   check('task completes through the gateway, the runtime and a governed tool', true);
@@ -45,8 +45,8 @@ export async function governedTask({page, check}) {
  * supplies a synthetic camera; everything above the device is the app's own code.
  */
 export async function cameraAndMicrophone({page, check}) {
-  await tab(page, 'Today').click();
-  await page.locator('button:has-text("Start camera")').click();
+  await tab(page, 'Agent').click();
+  await page.locator('button:has-text("Turn on camera")').click();
   await waitFor(async () => await page.locator(PREVIEW).count() > 0, 'the camera preview');
 
   const live = await page.evaluate(async sel => {
@@ -60,21 +60,21 @@ export async function cameraAndMicrophone({page, check}) {
 
   // Freeze is the native clients' pin: muting the track leaves the worker
   // holding the last frame it received.
-  await page.locator('button:has-text("Freeze frame")').click();
+  await page.locator('button:has-text("Hold this view")').click();
   check('freezing the view disables the outgoing video track', await page.evaluate(sel => document.querySelector(sel)?.srcObject?.getVideoTracks?.()[0]?.enabled === false, PREVIEW));
-  check('the frozen state is explained on screen', await page.locator('text=/Frozen\\./').count() > 0);
-  await page.locator('button:has-text("Unfreeze")').click();
+  check('the held view is explained on screen', await page.locator('text=/Holding this view/').count() > 0);
+  await page.locator('button:has-text("Unhold")').click();
   check('unfreezing re-enables it', await page.evaluate(sel => document.querySelector(sel)?.srcObject?.getVideoTracks?.()[0]?.enabled === true, PREVIEW));
 
   const before = (await state(page))?.artifact.length ?? 0;
-  await page.locator('button:has-text("Send photo")').click();
+  await page.locator('button:has-text("Send this photo")').click();
   await waitFor(async () => ((await state(page))?.artifact.length ?? 0) > before, 'the captured photo to reach the gateway', 45000, 1000);
   const s = await state(page);
   const photo = s?.artifact.find(a => a.kind === 'photo');
   check('a still captured from the live camera is stored as an owned photo', !!photo && photo.mime === 'image/jpeg', `mime=${photo?.mime}`);
   check('the photo is attached to a task as authorised visual context', s?.run.some(r => r.context?.attachments?.includes(photo?.id)));
 
-  await page.locator('button:has-text("Stop camera")').click();
+  await page.locator('button:has-text("Turn off camera")').click();
   check('stopping the camera releases the device', await page.evaluate(sel => {
     const v = document.querySelector(sel);
     return !v || !v.srcObject || v.srcObject.getVideoTracks().every(t => t.readyState === 'ended');
@@ -97,15 +97,15 @@ export async function cameraAndMicrophone({page, check}) {
 export async function realtimeDegradesHonestly({page, check, base}) {
   const ticket = await page.evaluate(async token => (await fetch('/livekit-token', {method: 'POST', credentials: 'same-origin', headers: {'content-type': 'application/json', 'x-csrf-token': token}, body: '{}'})).status, await csrf(page));
   check('a realtime ticket is refused with a service status when unconfigured', ticket === 503, `status=${ticket}`);
-  check('the app says voice is not set up rather than showing a dead control', await page.locator('text=/Voice conversation is not set up/').count() > 0);
-  check('typing still works without any realtime credential', await page.locator('textarea[aria-label="Ask or assign something"]').count() > 0);
+  check('the app says voice is not set up rather than showing a dead control', await page.locator('text=/Talking out loud is not switched on/').count() > 0);
+  check('typing still works without any realtime credential', await page.locator('textarea[aria-label="Tell it what you need"]').count() > 0);
   void base;
 }
 
 /** A sensitive tool must stop the run and ask, and the answer must come from the person. */
 export async function approvalGate({page, check}) {
-  await tab(page, 'Today').click();
-  await page.locator('textarea[aria-label="Ask or assign something"]').fill('Please ask me which room to use');
+  await tab(page, 'Agent').click();
+  await page.locator('textarea[aria-label="Tell it what you need"]').fill('Please ask me which room to use');
   await page.locator('button:has-text("Send")').click();
 
   await waitFor(async () => (await state(page))?.approval.some(a => a.status === 'pending'), 'the employee to ask', 150000, 1500);
@@ -125,8 +125,8 @@ export async function approvalGate({page, check}) {
 
 /** Stopping must end the work, not just the screen showing it. */
 export async function cancellation({page, check}) {
-  await tab(page, 'Today').click();
-  await page.locator('textarea[aria-label="Ask or assign something"]').fill('Research this slowly and report back');
+  await tab(page, 'Agent').click();
+  await page.locator('textarea[aria-label="Tell it what you need"]').fill('Research this slowly and report back');
   await page.locator('button:has-text("Send")').click();
   await waitFor(async () => (await state(page))?.run.some(r => r.status === 'working'), 'the task to start', 150000, 1500);
   const running = (await state(page))?.run.find(r => r.status === 'working');
@@ -147,7 +147,7 @@ export async function cancellation({page, check}) {
 export async function survivesDisconnect({browser, base, check, token}) {
   const first = await openPhone(browser, base);
   await signIn(first.page, token);
-  await first.page.locator('textarea[aria-label="Ask or assign something"]').fill('Look into this slowly and tell me what you find');
+  await first.page.locator('textarea[aria-label="Tell it what you need"]').fill('Look into this slowly and tell me what you find');
   await first.page.locator('button:has-text("Send")').click();
   await waitFor(async () => (await state(first.page))?.run.some(r => r.status === 'working'), 'the long task to start', 150000, 1500);
   const started = (await state(first.page))?.run.find(r => r.status === 'working');
@@ -163,7 +163,7 @@ export async function survivesDisconnect({browser, base, check, token}) {
   const finished = (await state(second.page))?.run.find(r => r.id === started.id);
   check('the task completed while no client was connected', finished?.status === 'completed');
   check('its result is there on reconnect', !!finished?.result, String(finished?.result).slice(0, 60));
-  await tab(second.page, 'Tasks').click();
+  await tab(second.page, 'History').click();
   check('and the result is visible on the phone after reconnecting', /shelf|bolts|Done/i.test(await second.page.locator('.screen').innerText()));
   await second.context.close();
 }
@@ -220,7 +220,7 @@ export async function safety({page, check}) {
   check('a mutation without the CSRF token is refused', csrfStatus === 403, `status=${csrfStatus}`);
   check('the refused request created no run', (await state(page))?.run.length === before + 1);
 
-  await tab(page, 'Settings').click();
+  await tab(page, 'Setup').click();
   await page.locator('button:has-text("Sign out")').click();
   await waitFor(async () => (await page.evaluate(async () => (await fetch('/api/state', {credentials: 'same-origin'})).status)) === 401, 'the session to be revoked');
   check('signing out revokes the session server-side', true);
@@ -245,8 +245,8 @@ export async function attachmentRules({page, check}) {
  * incomplete, so three prices are never mistaken for the market.
  */
 export async function procurementComparison({page, check}) {
-  await tab(page, 'Today').click();
-  await page.locator('textarea[aria-label="Ask or assign something"]').fill('Price M6 bolts across suppliers');
+  await tab(page, 'Agent').click();
+  await page.locator('textarea[aria-label="Tell it what you need"]').fill('Price M6 bolts across suppliers');
   await page.locator('button:has-text("Send")').click();
 
   await waitFor(async () => ((await state(page))?.material.length ?? 0) > 0, 'the supplier search to run', 150000, 1500);
@@ -269,7 +269,7 @@ export async function procurementComparison({page, check}) {
     && normalized.delivery?.available === true && normalized.inventory === 36,
     normalized ? `pickup=${normalized.pickup?.available} stock=${normalized.inventory}` : 'missing');
 
-  await tab(page, 'Tasks').click();
+  await tab(page, 'History').click();
   await waitFor(async () => (await page.locator('text=/suppliers answered/').count()) > 0, 'the comparison on screen');
   const shown = await page.locator('.screen').innerText();
   check('the phone says how many suppliers answered', /1 of 2 suppliers answered/.test(shown), shown.match(/\d of \d suppliers answered/)?.[0] ?? '');

@@ -1,5 +1,5 @@
 import './styles.css';
-import {api, setCsrf, subscribe, type Connections, type State} from './api';
+import {api, ApiError, setCsrf, subscribe, type Connections, type State} from './api';
 import {Camera} from './camera';
 import {h, mount} from './dom';
 import {applyCard, applyTranscript, dismissCard, emptyState} from './store';
@@ -8,8 +8,7 @@ import type {Ctx, Tab} from './ui/ctx';
 import {login} from './ui/login';
 import {today} from './ui/today';
 import {tasks} from './ui/tasks';
-import {employee} from './ui/employee';
-import {settings} from './ui/settings';
+import {setup} from './ui/setup';
 
 const root = document.getElementById('app')!;
 let stopStream: (() => void) | null = null;
@@ -23,15 +22,20 @@ const ctx: Ctx = {
   cameraMultiple: false,
   transcript: [],
   cards: [],
-  tab: 'today',
+  tab: 'agent',
   busy: false,
   owner: '',
   session: null as unknown as RealtimeSession,
   go(tab) {ctx.tab = tab; render();},
   async refresh() {
-    const [state, connections] = await Promise.all([api.state(), api.connections().catch(() => ctx.connections)]);
-    ctx.state = state as State;
-    ctx.connections = (connections ?? null) as Connections | null;
+    // Never throws. A failed refresh leaves the last good view on screen; the
+    // event stream or the next action brings it up to date. Letting this reject
+    // is how one dropped request used to blank the whole app.
+    try {
+      const [state, connections] = await Promise.all([api.state(), api.connections().catch(() => ctx.connections)]);
+      ctx.state = state as State;
+      ctx.connections = (connections ?? null) as Connections | null;
+    } catch {/* keep what is on screen */}
     render();
   },
   rerender: () => render(),
@@ -53,14 +57,13 @@ ctx.session = new RealtimeSession({
 });
 
 const TABS: {id: Tab; label: string}[] = [
-  {id: 'today', label: 'Today'},
-  {id: 'tasks', label: 'Tasks'},
-  {id: 'employee', label: 'Employee'},
-  {id: 'settings', label: 'Settings'},
+  {id: 'agent', label: 'Agent'},
+  {id: 'history', label: 'History'},
+  {id: 'setup', label: 'Setup'},
 ];
 
 function shell(): HTMLElement {
-  const screen = ctx.tab === 'tasks' ? tasks(ctx) : ctx.tab === 'employee' ? employee(ctx) : ctx.tab === 'settings' ? settings(ctx) : today(ctx);
+  const screen = ctx.tab === 'history' ? tasks(ctx) : ctx.tab === 'setup' ? setup(ctx) : today(ctx);
   return h('div', {class: 'app'},
     !ctx.streamOnline ? h('div', {class: 'banner', role: 'status', text: 'Offline — reconnecting…'}) : null,
     h('main', {class: 'main'}, screen),
@@ -82,7 +85,11 @@ function toast(message: string) {
 async function start(owner: string) {
   ctx.owner = owner;
   ctx.cameraMultiple = await ctx.camera.hasMultipleCameras();
-  await ctx.refresh();
+  // Show the app before its contents arrive. Waiting on the first load meant a
+  // single slow or refused request left someone looking at the sign-in screen
+  // as though they had never signed in.
+  render();
+  void ctx.refresh();
   stopStream = subscribe(
     event => {
       // The event says something changed and names the run; the authoritative
@@ -97,12 +104,25 @@ async function start(owner: string) {
 
 async function boot() {
   mount(root, h('div', {class: 'screen centered'}, h('p', {class: 'note', text: 'Loading…'})));
-  try {
-    const session = await api.session();
-    setCsrf(session.csrf);
-    await start(session.owner);
-  } catch {
-    mount(root, login(owner => void start(owner)));
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const session = await api.session();
+      setCsrf(session.csrf);
+      await start(session.owner);
+      return;
+    } catch (err) {
+      // Only "not signed in" means show the sign-in screen. Anything else -- a
+      // rate limit, a dropped connection, a gateway still starting -- is
+      // temporary, and signing someone out over it is both wrong and alarming.
+      if (err instanceof ApiError && err.status === 401) {
+        mount(root, login(owner => void start(owner)));
+        return;
+      }
+      mount(root, h('div', {class: 'screen centered'}, h('section', {class: 'card'},
+        h('h3', {text: 'Reconnecting…'}),
+        h('p', {class: 'note', text: 'Your agent is there. This phone just cannot reach it for a moment.'}))));
+      await new Promise(r => setTimeout(r, Math.min(8000, 1000 * 2 ** attempt)));
+    }
   }
 }
 

@@ -34,7 +34,7 @@ export function today(ctx: Ctx): HTMLElement {
     }
   };
 
-  const composer = h('textarea', {class: 'composer', rows: 2, placeholder: 'Ask or assign something…', 'aria-label': 'Ask or assign something'});
+  const composer = h('textarea', {class: 'composer', rows: 2, placeholder: 'Tell it what you need', 'aria-label': 'Tell it what you need'});
   const submit = h('button', {class: 'primary', disabled: ctx.busy, onclick: () => {const v = composer.value; composer.value = ''; void send(v);}}, ctx.busy ? 'Sending…' : 'Send');
   composer.addEventListener('keydown', e => {
     // Enter sends, Shift+Enter makes a new line -- on a phone keyboard the
@@ -43,16 +43,18 @@ export function today(ctx: Ctx): HTMLElement {
   });
 
   return h('div', {class: 'screen'},
-    cameraSection(ctx, send),
-    ...ctx.cards.map(cardView),
+    // A decision the agent is stuck on outranks everything, including the
+    // camera: until it is answered the agent is not doing anything.
     ...approvals.map(a => approvalCard(a, () => void ctx.refresh(), m => ctx.toast(m))),
     run ? runPanel(ctx, run) : null,
+    cameraSection(ctx, send),
+    ...ctx.cards.map(cardView),
     transcriptPanel(ctx),
     h('section', {class: 'card'},
-      h('h3', {text: 'Type instead'}),
+      h('h3', {text: 'Or type it'}),
       composer,
       h('div', {class: 'row'}, submit),
-      h('p', {class: 'note', text: 'Typing works whether or not the camera or microphone are on.'}),
+      h('p', {class: 'note', text: 'Typing always works, even with the camera and microphone off.'}),
     ),
     recent(ctx),
   );
@@ -86,16 +88,16 @@ function cameraSection(ctx: Ctx, send: (task: string, visual?: string) => Promis
   };
 
   return h('section', {class: 'card camera'},
-    cam.stream ? preview : h('div', {class: 'preview placeholder'}, h('p', {text: cam.error ? cameraMessage[cam.error] : 'Camera is off.'})),
+    cam.stream ? preview : h('div', {class: 'preview placeholder'}, h('p', {text: cam.error ? cameraMessage[cam.error] : 'Camera is off. Turn it on so it can see what you see.'})),
     h('div', {class: 'row wrap'},
       cam.stream
-        ? h('button', {class: 'ghost', onclick: () => void stopCamera()}, 'Stop camera')
-        : h('button', {class: 'primary', onclick: () => void startCamera()}, 'Start camera'),
-      cam.stream && ctx.cameraMultiple ? h('button', {class: 'ghost', onclick: () => void flip()}, cam.facing === 'environment' ? 'Front camera' : 'Back camera') : null,
-      cam.stream ? h('button', {class: 'ghost', onclick: () => {ctx.camera.setPinned(!ctx.camera.pinned); ctx.rerender();}}, ctx.camera.pinned ? 'Unfreeze' : 'Freeze frame') : null,
-      cam.stream ? h('button', {class: 'ghost', onclick: () => void capture()}, 'Send photo') : null,
+        ? h('button', {class: 'ghost', onclick: () => void stopCamera()}, 'Turn off camera')
+        : h('button', {class: 'primary', onclick: () => void startCamera()}, 'Turn on camera'),
+      cam.stream && ctx.cameraMultiple ? h('button', {class: 'ghost', onclick: () => void flip()}, cam.facing === 'environment' ? 'Flip to front' : 'Flip to back') : null,
+      cam.stream ? h('button', {class: 'ghost', onclick: () => {ctx.camera.setPinned(!ctx.camera.pinned); ctx.rerender();}}, ctx.camera.pinned ? 'Unhold' : 'Hold this view') : null,
+      cam.stream ? h('button', {class: 'ghost', onclick: () => void capture()}, 'Send this photo') : null,
     ),
-    ctx.camera.pinned ? h('p', {class: 'note', text: 'Frozen. The employee keeps seeing this frame until you unfreeze.'}) : null,
+    ctx.camera.pinned ? h('p', {class: 'note', text: 'Holding this view. Your agent keeps seeing this picture until you unhold.'}) : null,
     voiceRow(ctx, send),
   );
 }
@@ -114,13 +116,13 @@ function voiceRow(ctx: Ctx, _send: (task: string) => Promise<void>): HTMLElement
   const end = async () => {await ctx.session.disconnect(); ctx.rerender();};
 
   if (realtime === false) {
-    return h('p', {class: 'note', text: 'Voice conversation is not set up on this server. Typing and photos still work.'});
+    return h('p', {class: 'note', text: 'Talking out loud is not switched on yet. Typing and photos still work.'});
   }
   return h('div', {class: 'row wrap'},
     ctx.session.live
-      ? h('button', {class: 'ghost danger', onclick: () => void end()}, 'End conversation')
-      : h('button', {class: 'primary', disabled: state === 'connecting', onclick: () => void start()}, state === 'connecting' ? 'Connecting…' : 'Start conversation'),
-    ctx.session.live ? h('button', {class: 'ghost', onclick: async () => {await ctx.session.setMicEnabled(!ctx.session.micEnabled); ctx.rerender();}}, ctx.session.micEnabled ? 'Mute' : 'Unmute') : null,
+      ? h('button', {class: 'ghost danger', onclick: () => void end()}, 'Stop talking')
+      : h('button', {class: 'primary', disabled: state === 'connecting', onclick: () => void start()}, state === 'connecting' ? 'Connecting…' : 'Talk to your agent'),
+    ctx.session.live ? h('button', {class: 'ghost', onclick: async () => {await ctx.session.setMicEnabled(!ctx.session.micEnabled); ctx.rerender();}}, ctx.session.micEnabled ? 'Mute me' : 'Unmute me') : null,
     state === 'reconnecting' ? h('span', {class: 'pill warn', text: 'Reconnecting…'}) : null,
     ctx.sessionDetail && !ctx.session.live ? h('span', {class: 'pill warn', text: ctx.sessionDetail}) : null,
   );
@@ -132,7 +134,7 @@ function runPanel(ctx: Ctx, run: ReturnType<typeof activeRun> & {}): HTMLElement
     h('p', {class: 'eyebrow', text: STATUS_LABEL[run.status]}),
     h('h3', {text: run.task}),
     run.error ? h('p', {class: 'note', text: run.error}) : null,
-    blocked.length ? h('p', {class: 'note', text: 'An external action needs checking before this can continue. Open it under Tasks.'}) : null,
+    blocked.length ? h('p', {class: 'note', text: 'Something it started outside this app needs checking before it can carry on. Open it under History.'}) : null,
     h('div', {class: 'row'},
       h('button', {class: 'ghost danger', onclick: async () => {try {await api.cancel(run.id); await ctx.refresh();} catch (e) {ctx.toast(e instanceof Error ? e.message : 'Could not stop that.');}}}, 'Stop'),
       canResume(run, ctx.state.action) ? h('button', {class: 'ghost', onclick: async () => {try {await api.resume(run.id); await ctx.refresh();} catch (e) {ctx.toast(e instanceof Error ? e.message : 'Could not resume.');}}}, 'Resume') : null,
@@ -144,8 +146,8 @@ function transcriptPanel(ctx: Ctx): HTMLElement | null {
   if (!ctx.transcript.length) return null;
   const list = h('div', {class: 'transcript'});
   mount(list, ...ctx.transcript.slice(-40).map(t =>
-    h('p', {class: `line ${t.role} ${t.final ? '' : 'interim'}`}, h('span', {class: 'who', text: t.role === 'you' ? 'You' : 'Employee'}), h('span', {text: t.text}))));
-  return h('section', {class: 'card'}, h('h3', {text: 'Conversation'}), list);
+    h('p', {class: `line ${t.role} ${t.final ? '' : 'interim'}`}, h('span', {class: 'who', text: t.role === 'you' ? 'You' : 'Agent'}), h('span', {text: t.text}))));
+  return h('section', {class: 'card'}, h('h3', {text: 'What you both said'}), list);
 }
 
 // Cards come from the worker. Rendered as text only, and an image that fails to
@@ -170,10 +172,10 @@ function recent(ctx: Ctx): HTMLElement | null {
   const done = ctx.state.run.filter(r => r.status === 'completed').slice(0, 3);
   if (!done.length) return null;
   return h('section', {class: 'card'},
-    h('h3', {text: 'Recently finished'}),
+    h('h3', {text: 'Just finished'}),
     ...done.map(r => h('div', {class: 'row-item'},
       h('p', {class: 'task', text: r.task}),
       h('p', {class: 'note', text: `${relativeTime(r.completedAt ?? r.createdAt)} · ${STATUS_LABEL[r.status]}`}))),
-    h('button', {class: 'ghost', onclick: () => ctx.go('tasks')}, 'See all tasks'),
+    h('button', {class: 'ghost', onclick: () => ctx.go('history')}, 'See everything it has done'),
   );
 }

@@ -15,13 +15,13 @@ export const emptyState = (): State => ({
 });
 
 export const STATUS_LABEL: Record<RunStatus, string> = {
-  queued: 'Queued',
-  working: 'Working',
-  verifying: 'Checking the result',
+  queued: 'Starting',
+  working: 'Working on it',
+  verifying: 'Checking its work',
   completed: 'Done',
-  failed: "Couldn't finish",
+  failed: "Couldn't do it",
   cancelled: 'Stopped',
-  needs_user: 'Needs you',
+  needs_user: 'Waiting for you',
 };
 
 /** Side effects a person must authorise individually, in the gateway's own terms. */
