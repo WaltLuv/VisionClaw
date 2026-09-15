@@ -8,7 +8,8 @@ import type {Ctx, Tab} from './ui/ctx';
 import {login} from './ui/login';
 import {today} from './ui/today';
 import {tasks} from './ui/tasks';
-import {setup} from './ui/setup';
+import {employee} from './ui/employee';
+import {settings} from './ui/settings';
 
 const root = document.getElementById('app')!;
 let stopStream: (() => void) | null = null;
@@ -22,15 +23,14 @@ const ctx: Ctx = {
   cameraMultiple: false,
   transcript: [],
   cards: [],
-  tab: 'agent',
+  tab: 'today',
   busy: false,
   owner: '',
   session: null as unknown as RealtimeSession,
   go(tab) {ctx.tab = tab; render();},
   async refresh() {
-    // Never throws. A failed refresh leaves the last good view on screen; the
-    // event stream or the next action brings it up to date. Letting this reject
-    // is how one dropped request used to blank the whole app.
+    // Never throws. A failed refresh leaves the last good view on screen and the
+    // event stream brings it up to date; letting it reject blanked the app.
     try {
       const [state, connections] = await Promise.all([api.state(), api.connections().catch(() => ctx.connections)]);
       ctx.state = state as State;
@@ -57,13 +57,14 @@ ctx.session = new RealtimeSession({
 });
 
 const TABS: {id: Tab; label: string}[] = [
-  {id: 'agent', label: 'Agent'},
-  {id: 'history', label: 'History'},
-  {id: 'setup', label: 'Setup'},
+  {id: 'today', label: 'Today'},
+  {id: 'tasks', label: 'Tasks'},
+  {id: 'employee', label: 'Employee'},
+  {id: 'settings', label: 'Settings'},
 ];
 
 function shell(): HTMLElement {
-  const screen = ctx.tab === 'history' ? tasks(ctx) : ctx.tab === 'setup' ? setup(ctx) : today(ctx);
+  const screen = ctx.tab === 'tasks' ? tasks(ctx) : ctx.tab === 'employee' ? employee(ctx) : ctx.tab === 'settings' ? settings(ctx) : today(ctx);
   return h('div', {class: 'app'},
     !ctx.streamOnline ? h('div', {class: 'banner', role: 'status', text: 'Offline — reconnecting…'}) : null,
     h('main', {class: 'main'}, screen),
@@ -85,9 +86,8 @@ function toast(message: string) {
 async function start(owner: string) {
   ctx.owner = owner;
   ctx.cameraMultiple = await ctx.camera.hasMultipleCameras();
-  // Show the app before its contents arrive. Waiting on the first load meant a
-  // single slow or refused request left someone looking at the sign-in screen
-  // as though they had never signed in.
+  // Show the app before its contents arrive. Waiting on the first load meant one
+  // slow or refused request left you on the sign-in screen as if never signed in.
   render();
   void ctx.refresh();
   stopStream = subscribe(
@@ -111,16 +111,16 @@ async function boot() {
       await start(session.owner);
       return;
     } catch (err) {
-      // Only "not signed in" means show the sign-in screen. Anything else -- a
-      // rate limit, a dropped connection, a gateway still starting -- is
-      // temporary, and signing someone out over it is both wrong and alarming.
+      // Only "not signed in" means show the sign-in screen. A rate limit or a
+      // gateway still starting is temporary, and signing someone out over it is
+      // both wrong and alarming.
       if (err instanceof ApiError && err.status === 401) {
         mount(root, login(owner => void start(owner)));
         return;
       }
       mount(root, h('div', {class: 'screen centered'}, h('section', {class: 'card'},
         h('h3', {text: 'Reconnecting…'}),
-        h('p', {class: 'note', text: 'Your agent is there. This phone just cannot reach it for a moment.'}))));
+        h('p', {class: 'note', text: 'Your employee is there. This phone just cannot reach it for a moment.'}))));
       await new Promise(r => setTimeout(r, Math.min(8000, 1000 * 2 ** attempt)));
     }
   }

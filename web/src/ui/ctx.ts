@@ -2,9 +2,7 @@ import type {Connections, State} from '../api';
 import type {Camera} from '../camera';
 import type {Card, RealtimeSession, SessionState, TranscriptEntry} from '../realtime';
 
-// Two places to be, plus the gear. Anything that is not "talk to it" or "see
-// what it did" is configuration and lives behind Setup.
-export type Tab = 'agent' | 'history' | 'setup';
+export type Tab = 'today' | 'tasks' | 'employee' | 'settings';
 
 export interface Ctx {
   state: State;

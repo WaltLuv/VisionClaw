@@ -10,7 +10,7 @@ void import('../src/main').then(() => {
   // frame should show what the employee does, not an empty viewfinder. This
   // clicks the app's own tab, so nothing about the app is special-cased.
   const openTasks = () => {
-    const tab = [...document.querySelectorAll('[role="tab"]')].find(t => t.textContent === 'History') as HTMLButtonElement | undefined;
+    const tab = [...document.querySelectorAll('[role="tab"]')].find(t => t.textContent === 'Tasks') as HTMLButtonElement | undefined;
     if (tab) tab.click();
     else requestAnimationFrame(openTasks);
   };

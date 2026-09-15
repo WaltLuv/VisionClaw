@@ -6,7 +6,7 @@ import type {Ctx} from './ctx';
 
 export function tasks(ctx: Ctx): HTMLElement {
   const runs = sortRuns(ctx.state.run);
-  if (!runs.length) return h('div', {class: 'screen'}, h('section', {class: 'card'}, h('h3', {text: 'Nothing yet'}), h('p', {class: 'note', text: 'Everything you ask for shows up here, with what it found and proof of what it did.'})));
+  if (!runs.length) return h('div', {class: 'screen'}, h('section', {class: 'card'}, h('h3', {text: 'No tasks yet'}), h('p', {class: 'note', text: 'Anything you ask for shows up here with its result and evidence.'})));
   return h('div', {class: 'screen'}, ...runs.map(run => taskCard(ctx, run)));
 }
 
@@ -37,13 +37,13 @@ function taskCard(ctx: Ctx, run: Run): HTMLElement {
 // It is never retried automatically; the person states what actually happened
 // and that statement is stored as the evidence.
 function reconcilePanel(ctx: Ctx, actionId: string): HTMLElement {
-  const field = h('textarea', {class: 'composer', rows: 2, placeholder: 'What actually happened?', 'aria-label': 'What actually happened'});
+  const field = h('textarea', {class: 'composer', rows: 2, placeholder: 'What actually happened? (at least 10 characters)', 'aria-label': 'What actually happened'});
   return h('div', {class: 'reconcile'},
-    h('p', {class: 'note', text: 'This job started something outside the app and nobody knows how it ended. Go and check, then write down what happened. It will never guess or try again on its own.'}),
+    h('p', {class: 'note', text: 'This task started something outside the server and the result is unknown. Check it, then record what happened before resuming.'}),
     field,
     h('button', {class: 'primary', onclick: async () => {
       try {await api.reconcile(actionId, field.value.trim()); await ctx.refresh();}
       catch (e) {ctx.toast(e instanceof Error ? e.message : 'That could not be recorded.');}
-    }}, 'Save what happened'),
+    }}, 'Record outcome'),
   );
 }

@@ -156,7 +156,7 @@ export const tab = (page, name) => page.getByRole('tab', {name, exact: true});
 export async function signIn(page, token) {
   await page.locator('input[aria-label="Access code"]').fill(token);
   await page.locator('button:has-text("Sign in")').click();
-  await waitFor(async () => await tab(page, 'Agent').count() > 0, 'the app shell after sign-in');
+  await waitFor(async () => await tab(page, 'Today').count() > 0, 'the app shell after sign-in');
 }
 
 /**
