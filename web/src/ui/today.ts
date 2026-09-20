@@ -5,12 +5,36 @@ import type {Card} from '../realtime';
 import {activeRun, liveApprovals, relativeTime, STATUS_LABEL, canResume, unreconciledActions} from '../store';
 import {approvalCard} from './approvals';
 import type {Ctx} from './ctx';
+import {Dictation, dictationMessage, dictationSupported} from '../voice';
 
 // One <video> element for the life of the app. Rebuilding it on every render
 // would tear down and restart the camera on each keystroke elsewhere.
+// Dictation outlives any one render. The screen is rebuilt on every gateway
+// event, so handlers must not hold on to the elements that existed when
+// listening started — they would be writing into a detached box. What was heard
+// is kept here instead and put back on each render.
+let dictation: Dictation | null = null;
+let spoken = '';
+let listening = false;
+let listeningNote = '';
+
 const preview = document.createElement('video');
 preview.muted = true; preview.playsInline = true; preview.autoplay = true;
 preview.className = 'preview';
+
+/** Hand a task to the employee. Shared by typing, dictation and the camera. */
+export async function sendTask(ctx: Ctx, task: string, visual?: string) {
+  if (!task.trim() || ctx.busy) return;
+  ctx.busy = true; ctx.rerender();
+  try {
+    await api.execute(task.trim(), {source: ctx.camera.running ? 'phone' : 'text', attachments: [], ...(visual ? {visualDescription: visual} : {})}, newIdempotencyKey());
+    await ctx.refresh();
+  } catch (err) {
+    ctx.toast(err instanceof Error ? err.message : 'That task did not start.');
+  } finally {
+    ctx.busy = false; ctx.rerender();
+  }
+}
 
 export function today(ctx: Ctx): HTMLElement {
   const run = activeRun(ctx.state.run);
@@ -35,7 +59,34 @@ export function today(ctx: Ctx): HTMLElement {
   };
 
   const composer = h('textarea', {class: 'composer', rows: 2, placeholder: 'Ask or assign something…', 'aria-label': 'Ask or assign something'});
-  const submit = h('button', {class: 'primary', disabled: ctx.busy, onclick: () => {const v = composer.value; composer.value = ''; void send(v);}}, ctx.busy ? 'Sending…' : 'Send');
+  const heard = h('p', {class: 'note'});
+  // Speaking fills the same box typing does, and you read it before it is sent.
+  // Mishearing "Unit 12" as "Unit 20" and acting on it unasked is worse than a
+  // moment spent checking.
+  const mic = dictationSupported() ? h('button', {class: `ghost mic ${listening ? 'listening' : ''}`, 'aria-label': 'Speak instead of typing'}, listening ? '■ Stop' : '🎤 Speak') : null;
+  if (mic) {
+    if (listening) composer.value = spoken;
+    heard.textContent = listeningNote;
+    dictation ??= new Dictation({
+      onText: text => {
+        spoken = text;
+        // Write to whichever box is on screen now, not the one captured when
+        // listening began.
+        const live = document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Ask or assign something"]');
+        if (live) live.value = text;
+      },
+      onState: (state, detail) => {
+        listening = state === 'listening';
+        listeningNote = detail ?? dictationMessage[state];
+        ctx.rerender();
+      },
+    });
+    mic.addEventListener('click', () => {
+      if (dictation!.listening) dictation!.stop();
+      else {spoken = composer.value; dictation!.start(composer.value);}
+    });
+  }
+  const submit = h('button', {class: 'primary', disabled: ctx.busy, onclick: () => {dictation?.stop(); const v = composer.value; composer.value = ''; spoken = ''; listeningNote = ''; heard.textContent = ''; void send(v);}}, ctx.busy ? 'Sending…' : 'Send');
   composer.addEventListener('keydown', e => {
     // Enter sends, Shift+Enter makes a new line -- on a phone keyboard the
     // send key is the fast path and a newline is the rare one.
@@ -51,14 +102,15 @@ export function today(ctx: Ctx): HTMLElement {
     h('section', {class: 'card'},
       h('h3', {text: 'Type instead'}),
       composer,
-      h('div', {class: 'row'}, submit),
+      h('div', {class: 'row wrap'}, submit, mic),
+      heard,
       h('p', {class: 'note', text: 'Typing works whether or not the camera or microphone are on.'}),
     ),
     recent(ctx),
   );
 }
 
-function cameraSection(ctx: Ctx, send: (task: string, visual?: string) => Promise<void>): HTMLElement {
+export function cameraSection(ctx: Ctx, send: (task: string, visual?: string) => Promise<void>): HTMLElement {
   const cam = ctx.camera.state;
   const live = ctx.session.live;
 

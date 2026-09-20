@@ -96,6 +96,10 @@ export async function startStack({port, tokens}) {
       RIVERSIDE_TOKEN: 'fixture-only',
       NORTHSIDE_TOKEN: 'fixture-only',
       SUPPLIER_TIMEOUT_MS: '4000',
+      // One browser driving a dozen scenarios back to back is not one person on
+      // a phone. The ceiling itself is exercised by the gateway tests; here it
+      // would only throttle the suite.
+      API_RATE_LIMIT: '4000',
       // eBay must stay out of the search even with this whole stack running.
       EBAY_CLIENT_ID: 'fixture-only',
       EBAY_CLIENT_SECRET: 'fixture-only',

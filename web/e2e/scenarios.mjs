@@ -278,3 +278,104 @@ export async function procurementComparison({page, check}) {
   check('the phone shows when prices were checked', /checked .* ago|prices checked/i.test(shown));
   check('a complete total is shown for a fully quoted offer', /\$1[45]\.\d\d/.test(shown), shown.match(/\$\d+\.\d\d/g)?.join(' ') ?? '');
 }
+
+/**
+ * The V1 loop, end to end on a phone: ask something it cannot know, watch it go
+ * and find out, speak the next job instead of typing it, and confirm all of it
+ * survives the app being closed and reopened.
+ */
+export async function v1AcceptanceLoop({page, browser, base, check, token}) {
+  // --- ask something it has to look up (acceptance 3) ---------------------
+  await tab(page, 'Today').click();
+  await page.locator('textarea[aria-label="Ask or assign something"]').fill('Look up the current version of the tsx package and tell me what it is');
+  await page.locator('button:has-text("Send")').click();
+
+  await waitFor(async () => (await state(page))?.action.some(a => a.name === 'web_read' && a.status === 'completed'), 'the employee to read the web', 150000, 1500);
+  const afterRead = await state(page);
+  const readRun = afterRead.run.find(r => /tsx package/.test(r.task));
+  check('an information question sends the employee to the web', !!afterRead.action.find(a => a.name === 'web_read' && a.status === 'completed'));
+
+  await waitFor(async () => (await state(page))?.run.find(r => r.id === readRun.id)?.status === 'completed', 'the answer to come back', 150000, 1500);
+  const answered = (await state(page)).run.find(r => r.id === readRun.id);
+  check('it answers from what it actually read', /registry|version|dist-tags/i.test(String(answered?.result)), String(answered?.result).slice(0, 70));
+  check('the web page it read is kept as evidence', (await state(page)).artifact.some(a => a.runId === readRun.id));
+
+  // --- speak the next job (acceptance 4) ----------------------------------
+  // Headless Chromium exposes webkitSpeechRecognition but has no speech engine
+  // behind it, so it is replaced before any page script runs. Everything above
+  // the engine — the control, the wiring, the box it fills, and sending it — is
+  // the application's own code.
+  await page.addInitScript(() => {
+    class FakeRecognition {
+      continuous = false; interimResults = false; lang = 'en-US';
+      onresult = null; onerror = null; onend = null;
+      start() {
+        window.__listening = true;
+        window.__spoke = phrase => this.onresult?.({resultIndex: 0, results: [Object.assign([{transcript: phrase}], {isFinal: true})]});
+      }
+      stop() {window.__listening = false; this.onend?.();}
+      abort() {window.__listening = false;}
+    }
+    window.SpeechRecognition = FakeRecognition;
+    window.webkitSpeechRecognition = FakeRecognition;
+  });
+  await page.reload({waitUntil: 'networkidle'});
+  await waitFor(async () => await tab(page, 'Today').count() > 0, 'the app after reload');
+
+  const micButton = page.locator('button[aria-label="Speak instead of typing"]');
+  check('a microphone control is offered when the browser can listen', await micButton.count() > 0);
+  await micButton.click();
+  check('tapping it starts listening', await page.evaluate(() => window.__listening === true));
+  check('it says it is listening', await page.locator('text=/Listening…/').count() > 0);
+
+  await page.evaluate(() => window.__spoke('Check the smoke alarms in unit twelve'));
+  const composer = page.locator('textarea[aria-label="Ask or assign something"]');
+  check('what was said lands in the box, for you to read before it goes', (await composer.inputValue()) === 'Check the smoke alarms in unit twelve', await composer.inputValue());
+
+  await page.locator('button:has-text("Send")').click();
+  check('sending stops the microphone', await page.evaluate(() => window.__listening === false));
+  await waitFor(async () => (await state(page))?.run.some(r => r.task === 'Check the smoke alarms in unit twelve'), 'the spoken task to be accepted', 150000, 1500);
+  check('a spoken job becomes a real task', true);
+
+  // --- history and Today (acceptance 12, 13) ------------------------------
+  await tab(page, 'Tasks').click();
+  const history = await page.locator('.screen').innerText();
+  check('the task history shows the work', /tsx package/.test(history) && /smoke alarms/.test(history));
+
+  await tab(page, 'Today').click();
+  check('completed work shows on Today', /Recently finished|Done/i.test(await page.locator('.screen').innerText()));
+
+  // --- survives being closed and reopened (acceptance 14) -----------------
+  const before = await state(page);
+  const context2 = await browser.newContext({viewport: {width: 390, height: 844}});
+  const fresh = await context2.newPage();
+  await fresh.goto(base, {waitUntil: 'networkidle'});
+  await signIn(fresh, token);
+  const after = await state(fresh);
+  check('the employee is still the same employee after reopening', after?.agent[0]?.id === before.agent[0]?.id);
+  check('tasks, runs and results are all still there', after?.run.length === before.run.length
+    && after.run.find(r => r.id === readRun.id)?.result === answered?.result, `${before.run.length} -> ${after?.run.length}`);
+  check('the conversation is still there', after?.conversation.length === before.conversation.length);
+  check('the evidence is still there', after?.artifact.length === before.artifact.length);
+  await context2.close();
+}
+
+/** Phone widths the product is specified for. */
+export async function phoneWidths({browser, base, check, token}) {
+  for (const width of [375, 390, 430]) {
+    const context = await browser.newContext({viewport: {width, height: 844}});
+    const page = await context.newPage();
+    await page.goto(base, {waitUntil: 'networkidle'});
+    await signIn(page, token);
+    const overflow = await page.evaluate(() => ({
+      body: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      widest: Math.max(...[...document.querySelectorAll('.screen *')].map(n => n.getBoundingClientRect().right)),
+      client: document.documentElement.clientWidth,
+    }));
+    check(`no sideways scrolling at ${width}px`, overflow.body <= 0, `overflow=${overflow.body}px`);
+    check(`nothing runs off the screen at ${width}px`, overflow.widest <= overflow.client + 1, `widest=${Math.round(overflow.widest)} client=${overflow.client}`);
+    const tabs = await page.locator('[role="tab"]').count();
+    check(`all five areas reachable at ${width}px`, tabs === 5, `${tabs} tabs`);
+    await context.close();
+  }
+}

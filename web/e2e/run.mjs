@@ -36,6 +36,8 @@ try {
   await scenario.appLoads(ctx);
   await scenario.session(ctx);
   await scenario.governedTask(ctx);
+  await scenario.v1AcceptanceLoop(ctx);
+  await scenario.phoneWidths(ctx);
   await scenario.cameraAndMicrophone(ctx);
   await scenario.attachmentRules(ctx);
   await scenario.realtimeDegradesHonestly(ctx);

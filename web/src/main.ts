@@ -10,6 +10,7 @@ import {today} from './ui/today';
 import {tasks} from './ui/tasks';
 import {employee} from './ui/employee';
 import {settings} from './ui/settings';
+import {camera} from './ui/camera';
 
 const root = document.getElementById('app')!;
 let stopStream: (() => void) | null = null;
@@ -60,11 +61,12 @@ const TABS: {id: Tab; label: string}[] = [
   {id: 'today', label: 'Today'},
   {id: 'tasks', label: 'Tasks'},
   {id: 'employee', label: 'Employee'},
+  {id: 'camera', label: 'Camera'},
   {id: 'settings', label: 'Settings'},
 ];
 
 function shell(): HTMLElement {
-  const screen = ctx.tab === 'tasks' ? tasks(ctx) : ctx.tab === 'employee' ? employee(ctx) : ctx.tab === 'settings' ? settings(ctx) : today(ctx);
+  const screen = ctx.tab === 'tasks' ? tasks(ctx) : ctx.tab === 'employee' ? employee(ctx) : ctx.tab === 'camera' ? camera(ctx) : ctx.tab === 'settings' ? settings(ctx) : today(ctx);
   return h('div', {class: 'app'},
     !ctx.streamOnline ? h('div', {class: 'banner', role: 'status', text: 'Offline — reconnecting…'}) : null,
     h('main', {class: 'main'}, screen),
