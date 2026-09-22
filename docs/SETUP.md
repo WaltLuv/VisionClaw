@@ -84,8 +84,12 @@ Required to do anything:
 | `STORE_PATH` | Store file; its directory is the default data directory |
 
 One runtime is required: `ANTHROPIC_API_KEY`, or `HERMES_CHECKOUT` plus
-`HERMES_PYTHON` and a model provider credential. Optional capability
-credentials, and what stays unavailable without each, are listed in
+`HERMES_PYTHON` and a model provider credential. Both may be configured at
+once; `AGENT_RUNTIME` decides which one carries out tasks, and switching is
+that one line. `deploy/install.sh` asks for whichever you have and writes both;
+`deploy/doctor.sh` reports on the selected one and checks an Anthropic key
+against Anthropic rather than only checking that it is present. Optional
+capability credentials, and what stays unavailable without each, are listed in
 `docs/OWNER-ACTIONS.md`.
 
 Useful extras: `EMPLOYEE_DATA_DIR`, `WEB_DIST_DIR`, `RUN_CAPACITY` (1-99,

@@ -36,13 +36,31 @@ if [ -n "${PUBLIC_BASE_URL:-}" ]; then
   esac
 fi
 
-head_ "Hermes, which does the work"
-if [ -n "${HERMES_CHECKOUT:-}" ] && [ -f "$HERMES_CHECKOUT/run_agent.py" ]; then
-  ok "found at $HERMES_CHECKOUT"
-  if "${HERMES_PYTHON:-python3}" -c "import sys; sys.path.insert(0,'$HERMES_CHECKOUT'); import run_agent" 2>/dev/null; then ok "loads"
-  else no "will not load with ${HERMES_PYTHON:-python3} — set HERMES_PYTHON to the right interpreter"; fi
+head_ "The brain, which does the work"
+# Only the selected one has to be working. Reporting a missing Hermes as a
+# problem on a machine that runs Claude sends the owner off fixing nothing.
+if [ "${AGENT_RUNTIME:-anthropic}" = "hermes" ]; then
+  if [ -n "${HERMES_CHECKOUT:-}" ] && [ -f "$HERMES_CHECKOUT/run_agent.py" ]; then
+    ok "set to Hermes, found at $HERMES_CHECKOUT"
+    if "${HERMES_PYTHON:-python3}" -c "import sys; sys.path.insert(0,'$HERMES_CHECKOUT'); import run_agent" 2>/dev/null; then ok "it loads"
+    else no "it will not load with ${HERMES_PYTHON:-python3} — set HERMES_PYTHON to the right interpreter"; fi
+  else
+    no "set to Hermes, but it is not on this machine — set HERMES_CHECKOUT to the folder holding run_agent.py"
+  fi
+  [ -n "${ANTHROPIC_API_KEY:-}" ] && meh "Claude is set up too — switch with AGENT_RUNTIME=anthropic in .env"
 else
-  no "not found — set HERMES_CHECKOUT to the folder holding run_agent.py"
+  # A key that is merely present is not a key that works. This asks Anthropic.
+  if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
+    no "set to Claude, but there is no key — add ANTHROPIC_API_KEY to .env, or set AGENT_RUNTIME=hermes"
+  elif curl -fsS --max-time 10 -o /dev/null \
+         -H "x-api-key: $ANTHROPIC_API_KEY" -H "anthropic-version: 2023-06-01" \
+         "${ANTHROPIC_BASE_URL:-https://api.anthropic.com}/v1/models"; then
+    ok "set to Claude, hosted by Anthropic"
+    ok "the key works"
+  else
+    no "set to Claude, but the key was refused or Anthropic cannot be reached from this machine"
+  fi
+  [ -n "${HERMES_CHECKOUT:-}" ] && meh "Hermes is set up too — switch with AGENT_RUNTIME=hermes in .env"
 fi
 
 head_ "Gemini, which lets it see and talk"

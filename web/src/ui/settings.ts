@@ -40,7 +40,12 @@ window.addEventListener('beforeinstallprompt', e => {e.preventDefault(); install
 
 export function settings(ctx: Ctx): HTMLElement {
   const c = ctx.connections;
-  const engineReady = !!c && (c.hermes || c.anthropic);
+  // Readiness follows the runtime this owner is actually set to. Credentials for
+  // the OTHER one do not make tasks work, and saying "Ready" because some engine
+  // somewhere is configured is how you find out at task time instead of here.
+  const runtime = ctx.state.agent[0]?.runtime === 'hermes' ? 'hermes' : 'anthropic';
+  const engineReady = !!c && c[runtime];
+  const engineName = runtime === 'hermes' ? 'Hermes, running on your own server.' : 'Claude, hosted by Anthropic.';
 
   return h('div', {class: 'screen'},
     h('section', {class: 'card'},
@@ -53,7 +58,8 @@ export function settings(ctx: Ctx): HTMLElement {
       h('h3', {text: 'What it can do'}),
       h('div', {class: 'row-item'},
         h('p', {class: 'task', text: 'Carrying out tasks'}),
-        h('span', {class: `pill ${engineReady ? 'ok' : 'warn'}`, text: engineReady ? 'Ready' : 'Not set up'})),
+        h('span', {class: `pill ${engineReady ? 'ok' : 'warn'}`, text: engineReady ? 'Ready' : 'Not set up'}),
+        h('p', {class: 'note', text: engineReady ? engineName : `${engineName} Not connected yet.`})),
       ...CAPABILITIES.map(cap => h('div', {class: 'row-item'},
         h('p', {class: 'task', text: cap.label}),
         h('span', {class: `pill ${c?.[cap.key] ? 'ok' : 'warn'}`, text: c?.[cap.key] ? 'Ready' : 'Not set up'}),

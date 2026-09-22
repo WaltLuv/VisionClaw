@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Set up the field agent on the machine that already runs Hermes.
+# Set up the field agent on your VM.
 #
 # Run this on your VM, from the repository root:
 #
@@ -8,9 +8,14 @@
 # It is safe to run again: it keeps any answers you have already given and only
 # fills in what is missing.
 #
-# Why on the same machine: the gateway runs Hermes as a local process, so it has
-# to be able to see Hermes' files. That is also why it is not run in Docker
-# here -- a container cannot start a program that lives on the host.
+# Two things can do the thinking, and you can switch later by editing one line
+# in .env:
+#   Claude, hosted by Anthropic -- nothing to install, needs an API key.
+#   Hermes, running on this machine -- nothing to pay for, needs to be installed.
+#
+# If you use Hermes it has to be on THIS machine: the gateway starts it as a
+# local program, so it has to be able to see Hermes' files. That is also why
+# this is not run in Docker -- a container cannot start a program on the host.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -36,7 +41,7 @@ info "Python $(python3 -V 2>&1 | cut -d' ' -f2)"
 
 # --- find Hermes ----------------------------------------------------------
 
-say "Finding your Hermes agent"
+say "Looking for a Hermes agent on this machine"
 
 find_hermes() {
   # An installed Hermes has run_agent.py at the root of its package directory.
@@ -48,25 +53,29 @@ find_hermes() {
   done
 }
 
+# Not finding Hermes is not a failure. An owner who wants the hosted Claude
+# brain should not have to install a second one to get through this script.
 HERMES_DIR="${HERMES_CHECKOUT:-$(find_hermes || true)}"
-if [ -z "$HERMES_DIR" ]; then
-  bad "Could not find Hermes on this machine."
-  info "It is the folder containing run_agent.py."
-  info "Run this again with the path, for example:"
-  info "  sudo HERMES_CHECKOUT=/opt/hermes/.venv/lib/python3.11/site-packages bash deploy/install.sh"
-  exit 1
+HERMES_READY=false
+if [ -n "$HERMES_DIR" ]; then
+  if [ -z "$PY" ]; then
+    # Prefer the interpreter of the environment Hermes is installed into.
+    for candidate in "$HERMES_DIR/../../../bin/python" "$HERMES_DIR/.venv/bin/python" "$(command -v python3)"; do
+      [ -x "$candidate" ] && { PY="$(cd "$(dirname "$candidate")" && pwd)/$(basename "$candidate")"; break; }
+    done
+  fi
+  if "$PY" -c "import sys; sys.path.insert(0, '$HERMES_DIR'); import run_agent" 2>/dev/null; then
+    HERMES_READY=true
+    info "Hermes: $HERMES_DIR"
+    info "It loads with $PY"
+  else
+    info "Found something at $HERMES_DIR, but it will not load with $PY."
+    info "To use it, run again with HERMES_PYTHON set to the right interpreter."
+    HERMES_DIR=""
+  fi
+else
+  info "None on this machine. That is fine -- Claude needs nothing installed."
 fi
-info "Hermes: $HERMES_DIR"
-
-if [ -z "$PY" ]; then
-  # Prefer the interpreter of the environment Hermes is installed into.
-  for candidate in "$HERMES_DIR/../../../bin/python" "$HERMES_DIR/.venv/bin/python" "$(command -v python3)"; do
-    [ -x "$candidate" ] && { PY="$(cd "$(dirname "$candidate")" && pwd)/$(basename "$candidate")"; break; }
-  done
-fi
-"$PY" -c "import sys; sys.path.insert(0, '$HERMES_DIR'); import run_agent" 2>/dev/null \
-  && info "Hermes loads with $PY" \
-  || { bad "Hermes is at $HERMES_DIR but will not load with $PY."; info "Set HERMES_PYTHON to the interpreter Hermes is installed for and run again."; exit 1; }
 
 # --- answers only you have ------------------------------------------------
 
@@ -87,6 +96,30 @@ say "A few things only you know"
 DOMAIN="$(ask PUBLIC_DOMAIN 'The web address you will open on your phone (e.g. agent.yourcompany.com)')"
 [ -n "$DOMAIN" ] || { bad "A web address is required: phones only allow the camera and microphone over https."; exit 1; }
 GEMINI_KEY="$(ask GOOGLE_API_KEY 'Your Google Gemini API key (for seeing and talking)')"
+if [ "$HERMES_READY" = true ]; then
+  ANTHROPIC_KEY="$(ask ANTHROPIC_API_KEY 'Your Anthropic API key, so Claude can do the work (blank to use the Hermes on this machine)')"
+else
+  ANTHROPIC_KEY="$(ask ANTHROPIC_API_KEY 'Your Anthropic API key, so Claude can do the work')"
+fi
+
+# Which brain does the work. Both can be configured; only one runs at a time,
+# and swapping is one line in .env afterwards.
+if [ -n "$ANTHROPIC_KEY" ] && [ "$HERMES_READY" = true ]; then
+  RUNTIME="$(ask AGENT_RUNTIME 'Who should do the work to start with -- type anthropic or hermes' anthropic)"
+  case "$RUNTIME" in anthropic|hermes) ;; *) info "Not a choice I know; using anthropic."; RUNTIME=anthropic ;; esac
+elif [ -n "$ANTHROPIC_KEY" ]; then
+  RUNTIME=anthropic
+elif [ "$HERMES_READY" = true ]; then
+  RUNTIME=hermes
+else
+  bad "Nothing can do the work yet."
+  info "Give an Anthropic API key when asked, or install Hermes on this machine"
+  info "(the folder holding run_agent.py) and run this again. For a Hermes in an"
+  info "unusual place, point at it directly:"
+  info "  sudo HERMES_CHECKOUT=/opt/hermes/.venv/lib/python3.11/site-packages bash deploy/install.sh"
+  exit 1
+fi
+info "Work goes to: $RUNTIME"
 LK_URL="$(ask LIVEKIT_URL 'LiveKit URL (leave blank to set up voice later)')"
 LK_KEY="$(ask LIVEKIT_API_KEY 'LiveKit API key (blank to skip)')"
 LK_SECRET="$(ask LIVEKIT_API_SECRET 'LiveKit API secret (blank to skip)')"
@@ -119,8 +152,13 @@ GATEWAY_SERVICE_TOKEN=$SERVICE_TOKEN
 STORE_PATH=$ROOT/data/store.json
 EMPLOYEE_DATA_DIR=$ROOT/data
 
-# Your Hermes agent does the work.
-AGENT_RUNTIME=hermes
+# Who does the work. Change this one line to switch: anthropic or hermes.
+AGENT_RUNTIME=$RUNTIME
+
+# Claude, hosted by Anthropic.
+ANTHROPIC_API_KEY=$ANTHROPIC_KEY
+
+# Hermes, running on this machine.
 HERMES_CHECKOUT=$HERMES_DIR
 HERMES_PYTHON=$PY
 
@@ -146,8 +184,15 @@ say "Building the app"
 
 if [ -n "$LK_URL" ]; then
   say "Setting up the voice worker"
-  "$PY" -m venv "$ROOT/agent/.venv" 2>/dev/null || true
-  "$ROOT/agent/.venv/bin/pip" install -q -r "$ROOT/agent/requirements.txt" && info "voice worker ready"
+  # $PY is Hermes' interpreter, and there may not be a Hermes here. The voice
+  # worker only needs a Python 3, so fall back to this machine's own.
+  "${PY:-$(command -v python3)}" -m venv "$ROOT/agent/.venv" 2>/dev/null || true
+  if [ -x "$ROOT/agent/.venv/bin/pip" ] && "$ROOT/agent/.venv/bin/pip" install -q -r "$ROOT/agent/requirements.txt"; then
+    info "voice worker ready"
+  else
+    bad "Could not set up the voice worker. Talking out loud will not work yet."
+    info "Everything else is still being installed. Run deploy/doctor.sh afterwards."
+  fi
 fi
 
 mkdir -p "$ROOT/data"

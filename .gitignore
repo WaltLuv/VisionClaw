@@ -20,6 +20,8 @@ samples/CameraAccessAndroid/local.properties
 web/dist/
 web/demo-dist/
 **/.venv/
+# docs/TESTING.md creates this to run the Hermes suite against the real runtime
+.hermes-venv/
 **/__pycache__/
 **/*.sqlite*
 **/test-results/

@@ -6,15 +6,16 @@ credential this environment does not have, that is stated rather than implied.
 ## What runs without any credential
 
 ```bash
-cd gateway && npm ci && npx tsc --noEmit && npm test     # 78 tests
-cd web     && npm ci && npm run verify                   # build + 88 tests
+cd gateway && npm ci && npx tsc --noEmit && npm test     # 97 tests
+cd web     && npm ci && npm run verify                   # build + 92 tests
 ```
 
 `npm run verify` in `web/` builds first on purpose: the packaging tests read the
 real `web/dist` output rather than a description of it.
 
-Without `HERMES_CHECKOUT` the gateway suite reports 77 passed and 1 skipped --
-the skipped one is the Hermes subprocess test.
+Without `HERMES_CHECKOUT` the gateway suite reports 96 passed and 1 skipped --
+the skipped one is the Hermes subprocess test. Nothing else needs a credential,
+including the Anthropic runtime tests (see below).
 
 ## Running the Hermes tests
 
@@ -26,7 +27,7 @@ python3 -m venv .hermes-venv
 ./.hermes-venv/bin/pip install hermes-agent==0.19.0
 export HERMES_CHECKOUT="$(./.hermes-venv/bin/python -c 'import sysconfig;print(sysconfig.get_paths()["purelib"])')"
 export HERMES_PYTHON="$PWD/.hermes-venv/bin/python"
-cd gateway && npm test                                   # 78 passed, 0 skipped
+cd gateway && npm test                                   # 97 passed, 0 skipped
 ```
 
 `HERMES_CHECKOUT` must be the directory containing `run_agent.py`; for a pip
@@ -34,6 +35,50 @@ install that is the environment's `site-packages`. The runtime talks to a local
 OpenAI-compatible fixture, so no model credential is used.
 
 Version under test: **hermes-agent 0.19.0**.
+
+## Verifying the Anthropic runtime
+
+`tests/managed.test.ts` drives the preserved Anthropic Managed Agents path end
+to end. The gateway uses the real `@anthropic-ai/sdk`; only the far end is a
+fixture that speaks the Managed Agents wire protocol over loopback, selected
+with `ANTHROPIC_BASE_URL`. Provisioning, the session tool slate, the SSE event
+drain, the custom-tool round trip, approvals and cancellation all run for real.
+
+```bash
+cd gateway && npm test -- tests/managed.test.ts           # 7 passed
+```
+
+No credential is used and nothing leaves the machine. What it establishes:
+
+- one shared agent and environment, one vault and session per owner, and the
+  model, system prompt and toolsets living on the **agent** -- a session that
+  carried its own model would silently diverge from it;
+- an unchanged app surface does not bump the agent version on every task;
+- the hosted agent's own toolsets are forced to `always_ask`, the gateway's
+  capabilities are added as custom tools, and the employee's standing
+  instructions travel as the one `system.message` the API allows;
+- a governed read runs and its result is returned on the tool channel, with a
+  receipt stored against the run;
+- a financial action stops the run at `needs_user`, tells the hosted agent
+  nothing until the owner decides, and is charged only after approval;
+- a declined action is never executed and the refusal is returned to the model,
+  so it reports the refusal instead of inventing a delivered result;
+- built-in and MCP tool confirmations are answered by policy, not by the model:
+  a shell and an unlisted MCP write are denied, a listed read is allowed, and
+  every decision is recorded against the run;
+- an action left pending by a previous process is answered as an error and
+  never replayed under a new run;
+- cancelling interrupts the hosted session and closes the stream rather than
+  leaving it draining;
+- a missing `ANTHROPIC_API_KEY` refuses before any hosted call is made.
+
+These tests were checked by mutation: weakening the `always_ask` policy,
+removing the approval gate, auto-allowing hosted built-ins and dropping the
+stale-action error flag each fail exactly the test that covers them.
+
+What this does **not** establish: that Anthropic's own service behaves as
+documented, or that a real key works. That is one `deploy/doctor.sh` run away
+on a machine that has one.
 
 ## End-to-end
 
@@ -56,23 +101,30 @@ sign-out.
 
 ```bash
 cd web && npm run build
-cd web && npm run e2e                                    # 66 checks
+cd web && npm run e2e                                    # 90 checks
 ```
 
 Needs `HERMES_CHECKOUT` and `HERMES_PYTHON` as above; it exits 2 with
 instructions if they are missing. `CHROMIUM_PATH` overrides the browser binary.
+
+The suite is timing-sensitive on a loaded machine. Of three runs here, two
+passed 90/90 and one stopped at 52/53, having waited the full 150s for the
+Hermes subprocess to return supplier results while other suites were running.
+Nothing in the gateway or the client differed between those runs. Treat a
+single timeout on a busy machine as a result to reproduce on an idle one, not
+as a pass.
 
 ## Current results
 
 | Suite | Command | Result |
 |---|---|---|
 | Gateway typecheck | `npx tsc --noEmit` | clean |
-| Gateway tests | `npm test` | 78 passed, 0 failed, 0 skipped (10 files) |
-| Web typecheck + build | `npm run build` | clean; entry 27 kB, 9 kB gzipped |
-| Web tests | `npm test` | 88 passed (7 files) |
-| End-to-end | `npm run e2e` | 66 passed |
+| Gateway tests | `npm test` | 97 passed, 0 failed, 0 skipped (11 files) |
+| Web typecheck + build | `npm run build` | clean; entry 34.8 kB, 11.7 kB gzipped |
+| Web tests | `npm test` | 92 passed (8 files) |
+| End-to-end | `npm run e2e` | 90 passed |
 
-`npm run lint` in `gateway/` (prettier --check) fails on 27 files. It already
+`npm run lint` in `gateway/` (prettier --check) fails on 30 files. It already
 failed on 20 at the `a62fb16` checkpoint, before any of this work: the
 codebase's deliberate dense style does not match its own prettier config.
 Reformatting it is a separate decision, so new files follow the surrounding
@@ -103,7 +155,7 @@ Labels are the handoff's: **VERIFIED**, **BLOCKED ON OWNER CREDENTIAL**,
 | Adapter | Status |
 |---|---|
 | Hermes runtime | IMPLEMENTED + VERIFIED against the official runtime in a subprocess |
-| Anthropic Managed Agents | IMPLEMENTED + BLOCKED ON OWNER CREDENTIAL — preserved; governance (always_ask toolsets, listed reads only) and its unconfigured refusal verified in `parity.test.ts` |
+| Anthropic Managed Agents | IMPLEMENTED + VERIFIED end to end against a protocol fixture over loopback (`managed.test.ts`, 7 checks): provisioning shape, governed tool slate, approval gate, refusal, policy-answered confirmations, stale-action handling and cancellation. Live Anthropic account: BLOCKED ON OWNER CREDENTIAL |
 | Twilio SMS | Contract VERIFIED against fixtures; live account BLOCKED ON OWNER CREDENTIAL |
 | Retell voice | Contract VERIFIED against fixtures; live account BLOCKED ON OWNER CREDENTIAL |
 | Home Depot / Lowe's / Amazon / Walmart | Adapter, mapping, fulfillment and failure handling VERIFIED against fixtures; live accounts BLOCKED ON OWNER CREDENTIAL |

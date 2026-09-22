@@ -2,18 +2,20 @@
 
 In progress. Not production complete and not deployed.
 
-The phone client now exists and is served by the gateway; the Hermes runtime
-path works against the official runtime; deployment builds and ships both.
-Nothing here has run against live commercial providers or a physical phone.
+The phone client now exists and is served by the gateway; both runtimes work --
+Hermes against the official runtime in a subprocess, Anthropic Managed Agents
+against a protocol fixture over loopback -- and deployment builds and ships
+both. Nothing here has run against live commercial providers or a physical
+phone.
 
 Exact commands, results and per-criterion labels are in `docs/TESTING.md`.
 
 ## Verified in this checkout
 
-- Gateway typecheck clean; **78/78 tests pass, 0 skipped** across 10 files
-  (77 with 1 skipped when the Hermes runtime is not installed).
-- Web client typechecks and builds; **88/88 tests pass** across 7 files.
-- **66/66 end-to-end checks pass** against a real gateway in a real browser at a
+- Gateway typecheck clean; **97/97 tests pass, 0 skipped** across 11 files
+  (96 with 1 skipped when the Hermes runtime is not installed).
+- Web client typechecks and builds; **92/92 tests pass** across 8 files.
+- **90/90 end-to-end checks pass** against a real gateway in a real browser at a
   phone viewport, with a synthetic camera and microphone and two configured
   suppliers, one of which is deliberately down.
 
@@ -24,6 +26,11 @@ What the end-to-end run establishes on the real path:
   browser storage;
 - a task running through the gateway to Hermes and a governed tool, with
   evidence stored and shown;
+- the Anthropic Managed Agents path carrying the same governance: its own
+  toolsets forced to ask, the gateway's capabilities added as custom tools, a
+  purchase held at `needs_user` until the owner decides, a declined action
+  refused to the model and never executed, hosted tool confirmations answered
+  by policy, and cancellation interrupting the hosted session;
 - the camera opening, showing live frames, freezing by muting the outgoing
   track, capturing a still that becomes owned evidence attached to a task, and
   releasing the device on stop;
@@ -79,6 +86,7 @@ used. Per-criterion detail and how to reproduce each suite is in
 | 3 | Long task acknowledged fast, survives disconnect, completes later | IMPLEMENTED + VERIFIED |
 | 4 | Cancellation prevents hidden continuation | IMPLEMENTED + VERIFIED |
 | 5 | Hermes selection through the official runtime | IMPLEMENTED + VERIFIED |
+| 5a | Anthropic Managed Agents runtime, same governance | IMPLEMENTED + VERIFIED against a protocol fixture; live Anthropic account BLOCKED ON OWNER CREDENTIAL |
 | 5b | Codex through a supported server-side provider path | IMPLEMENTED + BLOCKED ON OWNER CREDENTIAL — only the credential boundary is verified |
 | 6 | SMS draft / approval / send / inbound status | IMPLEMENTED + VERIFIED against fixtures; live account BLOCKED ON OWNER CREDENTIAL |
 | 7 | Outbound call objective / status / transcript / outcome | IMPLEMENTED + VERIFIED against fixtures; live account BLOCKED ON OWNER CREDENTIAL |
@@ -112,6 +120,18 @@ Every mapping is overridable per deployment.
 
 ## Fixed in this pass
 
+- **The hosted runtime could not be reached through the supported install.**
+  `deploy/install.sh` required Hermes on the machine and hard-wrote
+  `AGENT_RUNTIME=hermes`, so an owner who wanted Claude could not get there.
+  Hermes is now optional, the installer asks for an Anthropic key, picks the
+  runtime from what is actually configured, and writes both so switching is one
+  line in `.env`. `deploy/doctor.sh` reports on the selected runtime and calls
+  Anthropic to check the key really works.
+- **The phone said "Ready" for an engine nobody had selected.** The settings
+  screen treated either runtime's credentials as readiness, so an owner set to
+  Anthropic with only Hermes configured was told tasks would work, and found
+  out otherwise at task time. Readiness now follows the selected runtime and
+  names which engine does the work.
 - Procurement was eBay and nothing else, instantiated by default. It is now a
   provider-neutral registry over Home Depot, Lowe's, Amazon, Walmart and any
   number of owner-configured local and specialty suppliers, with eBay demoted to
@@ -135,9 +155,14 @@ Every mapping is overridable per deployment.
   each provider behaves as documented. None has run against a live account.
 - The Codex-through-Hermes provider path is unverified beyond its credential
   boundary.
+- No live Anthropic account has been used. Every hosted-runtime test answers
+  from a loopback fixture, which proves the protocol and the governance the
+  gateway enforces, not that Anthropic's service behaves as documented.
+  `deploy/doctor.sh` now checks a real key against Anthropic, so an owner with
+  one can confirm that in a single command.
 - The container image is not built here: this sandbox has a docker client but no
   daemon.
-- `npm run lint` in `gateway/` fails on 27 files. It already failed on 20 at the
+- `npm run lint` in `gateway/` fails on 30 files. It already failed on 20 at the
   `a62fb16` checkpoint; the codebase's dense style does not match its own
   prettier config, and reformatting is a separate decision.
 - `gateway/package.json` declares `engines: >=24` while the tree is tested and
