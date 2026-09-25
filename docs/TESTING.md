@@ -6,7 +6,7 @@ credential this environment does not have, that is stated rather than implied.
 ## What runs without any credential
 
 ```bash
-cd gateway && npm ci && npx tsc --noEmit && npm test     # 126 tests
+cd gateway && npm ci && npx tsc --noEmit && npm test     # 129 tests
 cd web     && npm ci && npm run verify                   # build + 102 tests
 ```
 
@@ -28,7 +28,7 @@ python3 -m venv .hermes-venv
 ./.hermes-venv/bin/pip install hermes-agent==0.19.0
 export HERMES_CHECKOUT="$(./.hermes-venv/bin/python -c 'import sysconfig;print(sysconfig.get_paths()["purelib"])')"
 export HERMES_PYTHON="$PWD/.hermes-venv/bin/python"
-cd gateway && npm test                                   # 125 passed, 1 skipped (Claude Code, below)
+cd gateway && npm test                                   # 128 passed, 1 skipped (Claude Code, below)
 ```
 
 `HERMES_CHECKOUT` must be the directory containing `run_agent.py`; for a pip
@@ -137,7 +137,7 @@ To try the owner's real login once it is signed in, `bash deploy/doctor.sh
 
 ## Live browser and take-over
 
-`tests/browser.test.ts` (11 checks) against a stand-in Browser Use service,
+`tests/browser.test.ts` (14 checks) against a stand-in Browser Use service,
 and end-to-end checks in a real browser (below). The stand-in behaves like
 Browser Use's v4 API as its official SDK defines it (below): runs are created,
 polled and cancelled, never paused; each belongs to a session; a follow-up run
@@ -157,6 +157,12 @@ in the session reuses its live browser. Established:
 - time with the owner does not count against the employee's 15 minutes, but a
   take-over left open is ended after 45;
 - the live link is dropped from the record when the job ends or is stopped;
+- after a restart, every browser left open is stopped at its provider (a
+  Browserbase session released, a Browser Use run cancelled) and its slot
+  freed, so a new request is not held up; one the provider will not confirm
+  stopped is tried once more and then let go, and a browser started since is
+  never touched. The gateway does this itself on boot (mutation-checked: each
+  of these fails without the code for it);
 - the phone only frames https pages from Browser Use's hosts (or ones an owner
   adds with `BROWSER_LIVE_VIEW_HOSTS`, validated because they become part of
   the page policy); any other live view is named on screen, not framed, and is
@@ -239,6 +245,36 @@ it.
 policy blocks `api.browserbase.com`; on the server, `bash deploy/doctor.sh`
 checks the key against Browserbase itself.
 
+## Installer and doctor
+
+`deploy/install.sh` and `deploy/doctor.sh` were run for real in a fresh clone,
+with no terminal attached (as an agent runs them), against stand-ins for
+systemd and Caddy. The systemd stand-in starts each unit's `ExecStart` as its
+`User=`, with its `EnvironmentFile` read literally. So "gateway running" means
+the gateway actually started from the unit the installer wrote and answered
+`/health`. Established:
+
+- a first run with the answers given up front installs, builds, starts the
+  gateway (in production mode, with the generated `STATE_SECRET`) and adds
+  the site beside an existing Caddy site;
+- with the services running as an ordinary user rather than root, the gateway
+  can read its own code and the built app, `data/` and `.env` stay private to
+  that user, and `doctor.sh` works without sudo;
+- a second run keeps the address, the runtime, the access code, the secrets
+  and every setting added by hand exactly (including `$` and JSON values),
+  restarts the gateway, and does not add the Caddy site twice;
+- if Caddy rejects the result, its file is put back byte for byte (or, if there
+  was none, none is left) and the lines to add are printed;
+- `doctor.sh` reads values as systemd does and reports the Hermes model
+  provider, or its absence.
+
+Before these fixes, the same install left a gateway that could not start:
+sharp's Linux binary was missing, reproduced with the installer's own `npm ci`
+command.
+
+**Not verified here**: a real VPS, real systemd, real Caddy with a real
+certificate, and the voice worker's Python install (no LiveKit credentials).
+
 ## End-to-end
 
 Drives the built PWA in Chromium against a real gateway process -- real
@@ -274,12 +310,17 @@ Nothing in the gateway or the client differed between those runs. Treat a
 single timeout on a busy machine as a result to reproduce on an idle one, not
 as a pass.
 
+It happened again with the restart-recovery change. Of four runs, the two on
+an idle machine passed 119/119. The two run under load stopped on a 150s wait:
+once for a long task to start, right after the whole gateway suite; once for
+supplier search, while installer builds ran alongside.
+
 ## Current results
 
 | Suite | Command | Result |
 |---|---|---|
 | Gateway typecheck | `npx tsc --noEmit` | clean |
-| Gateway tests | `npm test` | 125 passed, 0 failed, 1 skipped (126 tests); the skip is the real Claude Code test, for the reason above |
+| Gateway tests | `npm test` | 128 passed, 0 failed, 1 skipped (129 tests); the skip is the real Claude Code test, for the reason above |
 | Web typecheck + build | `npm run build` | clean; entry 38.8 kB, 13.0 kB gzipped |
 | Web tests | `npm test` | 102 passed (9 files) |
 | End-to-end | `npm run e2e` | 119 passed |

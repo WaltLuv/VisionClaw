@@ -13,7 +13,7 @@ Exact commands, results and per-criterion labels are in `docs/TESTING.md`.
 
 ## Verified in this checkout
 
-- Gateway typecheck clean; **125 of 126 tests pass, 1 skipped**. The skip is the real-binary Claude Code test, which refuses to run
+- Gateway typecheck clean; **128 of 129 tests pass, 1 skipped**. The skip is the real-binary Claude Code test, which refuses to run
   inside a Claude Code cloud session with a network; offline it ran, and its
   startup contract passed.
 - Web client typechecks and builds; **102/102 tests pass** across 9 files.
@@ -136,6 +136,29 @@ Every mapping is overridable per deployment.
 
 ## Fixed in this pass
 
+- **The installer could not produce a working server.** `npm ci
+  --omit=optional` dropped sharp's Linux binary, so the gateway crashed on
+  start while the installer printed "gateway running". And with its private
+  umask left on, everything it built was readable by root alone, so services
+  running as the installing user could not have read their own code either.
+  It now installs what the app needs to run, leaves the build readable, gives
+  `.env` to the service user, and waits for the gateway to answer or stops with
+  the reason.
+- **Re-running the installer deleted settings.** It rewrote `.env` with only
+  its own settings, so a Hermes model provider, Twilio or supplier keys added by
+  hand were lost; it asked for the address again; and it did not restart the
+  running app, so new settings never loaded. It now keeps everything else as it
+  was, reads the address back, and restarts.
+- **The installer replaced the whole Caddy config**, so any site the server
+  already served would have gone. It now adds this one beside them, keeps the
+  old file, and puts it back if Caddy rejects the result.
+- **`doctor.sh` read `.env` as a shell script**, so a `$` in a key or password
+  stopped it and JSON values lost their quotes. It reads the file literally, as
+  systemd does, and now also says which model Hermes will use.
+- **A restart during browsing jammed the browser queue.** Records of browsers
+  open before a restart were never closed: one held the only slot, and an old
+  queued request held up every browser request behind it, for every owner. On
+  startup each is now stopped at its provider and its slot freed.
 - **App-connection OAuth state could be forged in production.** Without
   `STATE_SECRET` the gateway signed it with a constant that is in this
   repository, and an empty value signed with an empty key, so someone could

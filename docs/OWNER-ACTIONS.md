@@ -47,8 +47,12 @@ different engine on purpose.
   `bash deploy/doctor.sh --live` also sends one tiny real task.
 - **Hermes runtime**: install the official runtime on the server and set
   `HERMES_CHECKOUT` (the directory containing `run_agent.py`) and
-  `HERMES_PYTHON`, plus the model provider credential it should use. To route
-  Codex through Hermes, configure it as a supported Hermes provider. The gateway
+  `HERMES_PYTHON`, plus the model it should use: `HERMES_PROVIDER`,
+  `HERMES_MODEL` and that provider's key. The gateway runs Hermes with a home
+  of its own per owner, so Hermes settings and logins made elsewhere on the
+  machine do not apply. Codex through Hermes (`openai-codex`) signs in with a
+  ChatGPT account rather than a key; that sign-in has to be made inside the
+  owner's Hermes home (`docs/SETUP-ON-YOUR-VM.md` shows how). The gateway
   forwards only model-provider keys into the runtime (`OPENAI_API_KEY`,
   `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`,
   `GEMINI_API_KEY`), never a service credential such as Twilio, Retell, a
