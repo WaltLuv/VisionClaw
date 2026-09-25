@@ -6,8 +6,8 @@ credential this environment does not have, that is stated rather than implied.
 ## What runs without any credential
 
 ```bash
-cd gateway && npm ci && npx tsc --noEmit && npm test     # 122 tests
-cd web     && npm ci && npm run verify                   # build + 101 tests
+cd gateway && npm ci && npx tsc --noEmit && npm test     # 125 tests
+cd web     && npm ci && npm run verify                   # build + 102 tests
 ```
 
 `npm run verify` in `web/` builds first on purpose: the packaging tests read the
@@ -28,7 +28,7 @@ python3 -m venv .hermes-venv
 ./.hermes-venv/bin/pip install hermes-agent==0.19.0
 export HERMES_CHECKOUT="$(./.hermes-venv/bin/python -c 'import sysconfig;print(sysconfig.get_paths()["purelib"])')"
 export HERMES_PYTHON="$PWD/.hermes-venv/bin/python"
-cd gateway && npm test                                   # 121 passed, 1 skipped (Claude Code, below)
+cd gateway && npm test                                   # 124 passed, 1 skipped (Claude Code, below)
 ```
 
 `HERMES_CHECKOUT` must be the directory containing `run_agent.py`; for a pip
@@ -193,6 +193,52 @@ it does not, the owner's view would lose its connection, and hand-back would
 continue in a fresh browser. Whether a phone's keyboard opens inside Browser
 Use's viewer is up to that viewer.
 
+## Browserbase browser
+
+`tests/browserbase.test.ts` runs the employee's step-by-step browser tools
+against a **real headless Chromium** reached over CDP, exactly as a Browserbase
+session is reached, with a stand-in for Browserbase's session API and a local
+shop site. The stand-in follows Browserbase's API as its official SDK
+(`@browserbasehq/sdk` 2.21.0) defines it: `POST /v1/sessions` with
+`X-BB-API-Key`, `GET /v1/sessions/{id}/debug` for the live view, and
+`POST /v1/sessions/{id}` with `REQUEST_RELEASE` to end it. Established:
+
+- no browser is started until the owner approves opening one (it is a
+  `computer` action), and the approval card says what for;
+- the employee opens a browser, goes to a page, reads its text and controls,
+  clicks, types, submits and screenshots it; the screenshot becomes an owned
+  artifact; the live view is recorded for the phone but never returned to the
+  model, and the API key goes to Browserbase only -- it is in no receipt,
+  action or event;
+- it refuses to press a button that places an order or pays, judged both by
+  what it was asked to press and by the element actually hit (visible text,
+  value, label, title), so a "Place order" submit input is refused too;
+- it refuses to type into password fields (by type, even with an innocent
+  label), one-time-code and payment autocomplete fields, and fields labelled as
+  passwords, card numbers, security codes, expiry, PINs or account numbers;
+- while the owner has taken the browser over, the employee's next step waits
+  and sends nothing; it continues after hand-back;
+- another owner's task cannot use the browser;
+- stopping the task, or its finishing, releases the session at the provider
+  and drops the live link;
+- mutation-checked: removing the element-name check, the password-type check
+  or the owner wait each makes a test fail.
+
+End to end (below, 8 checks): opening the browser asks first; taking it over
+is immediate; while the owner drives, the shop receives no requests from the
+employee and its task waits rather than failing; handing back lets it finish;
+every step is on the record; the answer came from the page it read; and the
+session is released as soon as the task is done.
+
+`tests/suppliers.test.ts` also covers `offer_record`: an offer read on a
+website joins the supplier comparison marked as read from a website and
+unverified, and checkout refuses it, since no supplier connection stands behind
+it.
+
+**Not verified here**: a live Browserbase session. This environment's network
+policy blocks `api.browserbase.com`; on the server, `bash deploy/doctor.sh`
+checks the key against Browserbase itself.
+
 ## End-to-end
 
 Drives the built PWA in Chromium against a real gateway process -- real
@@ -208,13 +254,14 @@ phone takes over https.
 
 Covered: sign-in and session hardening; a governed task through the runtime;
 camera capture to evidence; honest degradation with no realtime credentials;
-the approval gate; watching the employee browse and taking over; cancellation; a task surviving the page being closed
+the approval gate; watching the employee browse and taking over, with Browser
+Use and with a Browserbase browser the employee drives itself; cancellation; a task surviving the page being closed
 mid-flight; isolation between two signed-in owners; idempotency, CSRF and
 sign-out.
 
 ```bash
 cd web && npm run build
-cd web && npm run e2e                                    # 111 checks
+cd web && npm run e2e                                    # 119 checks
 ```
 
 Needs `HERMES_CHECKOUT` and `HERMES_PYTHON` as above; it exits 2 with
@@ -232,12 +279,13 @@ as a pass.
 | Suite | Command | Result |
 |---|---|---|
 | Gateway typecheck | `npx tsc --noEmit` | clean |
-| Gateway tests | `npm test` | 121 passed, 0 failed, 1 skipped (14 files); the skip is the real Claude Code test, for the reason above |
-| Web typecheck + build | `npm run build` | clean; entry 38.5 kB, 12.9 kB gzipped |
-| Web tests | `npm test` | 101 passed (9 files) |
-| End-to-end | `npm run e2e` | 111 passed |
+| Gateway tests | `npm test` | 124 passed, 0 failed, 1 skipped (125 tests); the skip is the real Claude Code test, for the reason above |
+| Web typecheck + build | `npm run build` | clean; entry 38.8 kB, 13.0 kB gzipped |
+| Web tests | `npm test` | 102 passed (9 files) |
+| End-to-end | `npm run e2e` | 119 passed |
 
-`npm run lint` in `gateway/` (prettier --check) fails on 36 files. It already
+`npm run lint` in `gateway/` (prettier --check) fails on 38 files (the two
+Browserbase files are the newest). It already
 failed on 20 at the `a62fb16` checkpoint, before any of this work: the
 codebase's deliberate dense style does not match its own prettier config.
 Reformatting it is a separate decision, so new files follow the surrounding

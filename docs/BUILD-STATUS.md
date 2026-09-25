@@ -13,12 +13,11 @@ Exact commands, results and per-criterion labels are in `docs/TESTING.md`.
 
 ## Verified in this checkout
 
-- Gateway typecheck clean; **121 of 122 tests pass, 1 skipped** across 14
-  files. The skip is the real-binary Claude Code test, which refuses to run
+- Gateway typecheck clean; **124 of 125 tests pass, 1 skipped**. The skip is the real-binary Claude Code test, which refuses to run
   inside a Claude Code cloud session with a network; offline it ran, and its
   startup contract passed.
-- Web client typechecks and builds; **101/101 tests pass** across 9 files.
-- **111/111 end-to-end checks pass** against a real gateway in a real browser at a
+- Web client typechecks and builds; **102/102 tests pass** across 9 files.
+- **119/119 end-to-end checks pass** against a real gateway in a real browser at a
   phone viewport, with a synthetic camera and microphone and two configured
   suppliers, one of which is deliberately down.
 
@@ -29,11 +28,17 @@ What the end-to-end run establishes on the real path:
   browser storage;
 - a task running through the gateway to Hermes and a governed tool, with
   evidence stored and shown;
-- watching the employee browse: the live page loads under the app's policy,
-  taps do nothing while the employee drives, taking over pauses it at the
-  provider before the phone says you are in control, your taps and typing
-  then reach the page, the page is loaded once however often the app
-  re-renders, and Stop cancels and lets go of it;
+- watching the employee browse with Browser Use: the live page loads under the
+  app's policy, taps do nothing while the employee drives, taking over stops
+  the employee's run at the provider before the phone says you are in control,
+  your taps and typing then reach the page, handing back continues in the same
+  browser session, the page is loaded once however often the app re-renders,
+  and Stop cancels and lets go of it;
+- a browser the employee drives itself (Browserbase, with a real Chromium
+  standing in for the remote browser): opening it asks first, taking it over
+  is immediate, the employee sends the website nothing while you drive and its
+  task waits, handing back lets it finish from the page it read, and the
+  browser is released when the task is done;
 - the Anthropic Managed Agents path carrying the same governance: its own
   toolsets forced to ask, the gateway's capabilities added as custom tools, a
   purchase held at `needs_user` until the owner decides, a declined action
@@ -97,6 +102,7 @@ used. Per-criterion detail and how to reproduce each suite is in
 | 5a | Anthropic Managed Agents runtime, same governance | IMPLEMENTED + VERIFIED against a protocol fixture; live Anthropic account BLOCKED ON OWNER CREDENTIAL |
 | 5c | Claude Code on the owner's own subscription, same governance | IMPLEMENTED + VERIFIED against a stand-in CLI through the real bridge; startup contract VERIFIED with the real binary offline; the full loop with the real binary and a real login is for the server (`npm test -- tests/claude.test.ts`, then `deploy/doctor.sh --live`) |
 | 13 | Watch the employee browse and take the browser over | IMPLEMENTED + VERIFIED in a real browser against a stand-in shaped like Browser Use's v4 API (confirmed from its official SDK); that a stopped run's browser stays open for the owner is implied by Browser Use's session design but unconfirmed; live account BLOCKED ON OWNER CREDENTIAL |
+| 13a | A browser the employee drives step by step, with live view and take-over (Browserbase) | IMPLEMENTED + VERIFIED against a real Chromium over CDP and a stand-in shaped like Browserbase's API (from its official SDK), in gateway tests and end to end; code refuses purchase buttons and password/payment fields; a live Browserbase session BLOCKED ON OWNER NETWORK/CREDENTIAL (this environment cannot reach `api.browserbase.com`) |
 | 5b | Codex through a supported server-side provider path | IMPLEMENTED + BLOCKED ON OWNER CREDENTIAL — only the credential boundary is verified |
 | 6 | SMS draft / approval / send / inbound status | IMPLEMENTED + VERIFIED against fixtures; live account BLOCKED ON OWNER CREDENTIAL |
 | 7 | Outbound call objective / status / transcript / outcome | IMPLEMENTED + VERIFIED against fixtures; live account BLOCKED ON OWNER CREDENTIAL |
@@ -122,7 +128,7 @@ tests. None has run against a live account in this repository.
 | Specialty vendors | Owner-configured catalog | IMPLEMENTED + VERIFIED — same connection model; nothing is hardcoded to one vendor |
 | eBay | Official API, optional | IMPLEMENTED + BLOCKED ON OWNER CREDENTIAL — off unless `EBAY_ENABLED=true`; never a default or only supplier |
 | MCP-backed supplier | Connected tool | SCAFFOLDED — a connector may expose catalog tools and an exact-quote checkout, but no supplier has been run this way here |
-| Browserbase/Stagehand supplier | Browser | NOT IMPLEMENTED as a supplier adapter — browser use exists as a governed capability, but no supplier is reached through it |
+| Any website, read in a browser | Browserbase browser + `offer_record` | IMPLEMENTED + VERIFIED against fixtures — the employee reads a price on a supplier's site and records it; it joins the comparison marked as read from a website and unverified, and checkout refuses it (no supplier connection can quote an exact total), so the owner buys it on the site. Stagehand is not used: the employee drives the browser through the gateway's own governed step tools |
 
 The field mappings for Home Depot and Lowe's are defaults against partner
 catalog shapes and should be confirmed against the endpoint an owner is granted.
@@ -130,6 +136,19 @@ Every mapping is overridable per deployment.
 
 ## Fixed in this pass
 
+- **The employee could only hand a whole browsing job away.** With
+  `BROWSERBASE_API_KEY` it now drives a real browser one step at a time
+  through governed tools, and the owner can watch it live and take it over:
+  while the owner drives, the employee takes no steps in it. Pressing a
+  button that places an order or pays, and typing into password or payment
+  fields, are refused in code, whatever the model asks.
+- **A price seen on a website had nowhere to go.** `offer_record` adds it to
+  the supplier comparison, marked as read from a website and unverified, and
+  checkout refuses it, so the owner buys it on the site.
+- **The README described a glasses-first app built on OpenClaw.** The phone app,
+  the gateway and the native apps no longer have that path. It is rewritten
+  phone-first, with `docs/ARCHITECTURE.md` and a root `.env.example` that lists
+  only variables the code reads.
 - **Nothing could run on a Claude subscription.** Managed Agents is an API
   product and cannot sign in with one. Claude Code is now a third runtime: the
   unmodified binary, signed in by the owner through Anthropic's own flow, with
@@ -197,7 +216,18 @@ Every mapping is overridable per deployment.
   one can confirm that in a single command.
 - The container image is not built here: this sandbox has a docker client but no
   daemon.
-- `npm run lint` in `gateway/` fails on 36 files. It already failed on 20 at the
+- No live Browserbase session has run: this environment's network policy
+  blocks `api.browserbase.com`. The API shape comes from Browserbase's official
+  SDK. The live view is assumed to be served under `browserbase.com`, which is
+  allowlisted; if it is served from another host, the phone names that host
+  instead of framing it until it is added to `BROWSER_LIVE_VIEW_HOSTS`.
+  `deploy/doctor.sh` checks the key against Browserbase on the server.
+- The iOS app still carries upstream's "self-hosted" backend setting and
+  `OpenClaw`-named files and settings keys. Renaming the keys would erase
+  owners' saved settings, and iOS cannot be built here to prove a rename, so
+  they stay; nothing in the phone app, the gateway or Android depends on
+  OpenClaw.
+- `npm run lint` in `gateway/` fails on 38 files. It already failed on 20 at the
   `a62fb16` checkpoint; the codebase's dense style does not match its own
   prettier config, and reformatting is a separate decision.
 - `gateway/package.json` declares `engines: >=24` while the tree is tested and

@@ -39,6 +39,22 @@ Phone PWA/native sources → existing LiveKit worker → Gemini realtime convers
 
 The model is replaceable. The employee, transcript, memory, tasks, permissions and artifacts remain outside model prompts. Personal and work tasks use the same core; property capabilities are optional skills.
 
+## Current state
+
+Where the migration stands against the plan above, as of this checkout (details
+and evidence in `BUILD-STATUS.md` and `TESTING.md`):
+
+| Area | Now |
+|---|---|
+| Gateway | Extended in place; the employee lives in `gateway/src/employee/` beside the upstream endpoints, which still serve the native apps and the worker |
+| Runtimes | One interface, three implementations: Hermes (official runtime, subprocess), Anthropic Managed Agents (preserved default), Claude Code on the owner's own subscription |
+| Durable state | SQLite run queue with restart recovery, action ledger, argument-bound approvals, receipts, replayable events |
+| Phone | `web/` PWA served by the gateway: camera, LiveKit voice, tasks, approvals, memory, contacts, suppliers, live browser |
+| Browser | Browser Use (delegated jobs) and Browserbase (the employee drives, the owner can take over), both behind ownership, capacity, approvals and a live-view host allowlist |
+| Procurement | Provider-neutral supplier registry; eBay optional |
+| OpenClaw | No longer a dependency of the phone, gateway or Android; iOS keeps upstream's optional self-hosted setting and `OpenClaw`-named identifiers so saved settings survive |
+| Live providers | None exercised from this environment; each is BLOCKED ON OWNER CREDENTIAL in `BUILD-STATUS.md` |
+
 ## Recovery note
 
 Workspace maintenance removed the first unpushed checkout during a usage interruption. This checkout is reconstructed from the audited upstream and retained implementation context. Earlier local test results are historical, not verification of the reconstructed files. Current checks are recorded in TESTING.md.

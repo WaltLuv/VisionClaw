@@ -99,7 +99,12 @@ capability credentials, and what stays unavailable without each, are listed in
 Useful extras: `EMPLOYEE_DATA_DIR`, `WEB_DIST_DIR`, `RUN_CAPACITY` (1-99,
 default 2), `AGENT_RUNTIME` (`anthropic`, `hermes` or `claude`),
 `MANAGED_READ_TOOLS`, `CLAUDE_CODE_BIN`, `CLAUDE_CODE_MODEL`,
+`BROWSERBASE_API_KEY` (a browser the employee drives and you can take over),
+`BROWSER_USE_API_KEY`, `COMPUTER_CAPACITY` (browsers open at once, default 1),
 `BROWSER_LIVE_VIEW_HOSTS`.
+
+Every variable the code reads is listed by category, with what it does, in
+the repository-root `.env.example`.
 
 Invalid values for `AGENT_RUNTIME`, `RUN_CAPACITY`, `COMPUTER_CAPACITY`,
 `BROWSER_LIVE_VIEW_HOSTS` (it becomes part of the page's Content-Security-Policy)

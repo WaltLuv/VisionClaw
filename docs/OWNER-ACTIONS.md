@@ -48,8 +48,11 @@ different engine on purpose.
 - **Hermes runtime**: install the official runtime on the server and set
   `HERMES_CHECKOUT` (the directory containing `run_agent.py`) and
   `HERMES_PYTHON`, plus the model provider credential it should use. To route
-  Codex through Hermes, configure it as a supported Hermes provider; the gateway
-  forwards `OPENAI_API_KEY` and no other service credential into the runtime.
+  Codex through Hermes, configure it as a supported Hermes provider. The gateway
+  forwards only model-provider keys into the runtime (`OPENAI_API_KEY`,
+  `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`,
+  `GEMINI_API_KEY`), never a service credential such as Twilio, Retell, a
+  supplier or a browser key.
 
 With neither, a submitted task is recorded and then fails with a message saying
 the employee is not connected.
@@ -93,6 +96,17 @@ cannot work.
   `SUPPLIER_CONFIG_PATH`: an id, a display name, an https (or loopback)
   endpoint, an auth variable, and where each normalized field lives in the
   response. Nothing is hardcoded to a particular vendor.
+- **A browser the employee drives itself**: `BROWSERBASE_API_KEY`
+  (`BROWSERBASE_PROJECT_ID` is optional; set it to choose a project). The
+  employee opens a browser once you approve it, works in it step by step, and
+  you can watch it and take it over from the phone; while you drive it takes no
+  steps. It will not press a button that places an order or pays, or type
+  passwords or payment details: you can take over and do those yourself. The
+  server must be able to reach `api.browserbase.com` and the
+  `*.browserbase.com` address each browser session connects on;
+  `bash deploy/doctor.sh` checks the key against Browserbase. If Browserbase
+  serves its live view from a host outside `browserbase.com`, the phone names
+  that host instead of showing it; add it to `BROWSER_LIVE_VIEW_HOSTS`.
 - **Browser use**: `BROWSER_USE_API_KEY`. While the employee browses, Today
   shows **Watch it browse**: a full-screen live view you can **Take over** (the
   employee's current run is stopped at Browser Use first; the browser stays
