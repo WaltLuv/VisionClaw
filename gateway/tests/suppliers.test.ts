@@ -390,3 +390,30 @@ test('a cart records every supplier it spans, since each quotes separately',asyn
  assert.deepEqual([...cart.suppliers].sort(),['home_depot','walmart']);
  db.close();
 });
+
+// --- offers read on a supplier's own website ------------------------------
+
+// A supplier with no API or feed (Menards, a manufacturer's own store) can
+// still be compared: the employee reads the offer in a browser the owner can
+// watch and records what the page showed. It must say where it came from, must
+// not pretend to be a verified match, and must never be buyable through checkout.
+test('an offer read on a website joins the comparison, marked as such, and cannot be checked out',async()=>{
+ const db=new Store(':memory:'),t=new ToolGateway(db);db.put('a','run',{id:'r',status:'working'});db.put('b','run',{id:'rb',status:'working'});
+ registerProcurement(t,db,[stub('home_depot','The Home Depot',[{unitPrice:8.47,shipping:0,tax:0,fees:0}])]);
+ const search=await t.invoke('a','r','products_search',{description:'M6 bolt',quantity:1},'s');
+ const read=await t.invoke('a','r','offer_record',{requestId:search.requestId,supplier:'Menards',product:'M6 x 20 bolt, 20-pack',url:'https://www.menards.com/p/m6-bolt',unitPrice:6.99,availability:'In stock at store',pickup:'Today'},'o');
+ assert.equal(read.requestId,search.requestId,'it joins the comparison that was already running');
+ const offer=db.get('a','offer',read.offerId)!;
+ assert.equal(offer.method,'browser','it says it was read from the site');
+ assert.equal(offer.matchQuality,'unverified','and does not pretend to be a verified match');
+ assert.equal(offer.shipping,null,'what the page did not show stays unknown, not zero');
+ assert.ok(offer.observedAt,'it carries when the price was seen');
+ assert.deepEqual(read.offers.map((o:any)=>o.supplier).sort(),['Menards','The Home Depot']);
+ const material=db.get('a','material',search.requestId)!;
+ assert.ok(material.suppliers.some((s:any)=>s.name==='Menards'&&s.method==='browser'&&s.status==='ok'),'the comparison names the site it was read from');
+ assert.match(read.note,/cannot be bought through checkout/);
+ assert.equal([...t.tools.keys()].some(k=>k.startsWith('purchase_order')),false,'no checkout exists for it to be bought through');
+ await assert.rejects(()=>t.invoke('b','rb','offer_record',{requestId:search.requestId,supplier:'Menards',product:'x',url:'https://www.menards.com/p/x',unitPrice:1},'ob'),/not found/,'another owner cannot add to your comparison');
+ await assert.rejects(()=>t.invoke('a','r','offer_record',{supplier:'X',product:'x',url:'javascript:alert(1)',unitPrice:1},'bad'),'only a real web address');
+ db.close();
+});

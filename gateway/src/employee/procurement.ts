@@ -60,6 +60,32 @@ export function registerProcurement(t:ToolGateway,db:Store,adapters?:SupplierAda
    note:'Prices and availability are as reported at the time shown. Taxes and stock are only confirmed by a supplier quote.'};
  }});
  t.register({id:'suppliers_list',description:'List connected suppliers and how each is reached',effect:'read',schema:z.object({}),run:async()=>registry().map(s=>({id:s.id,name:s.name,method:s.method,connected:s.configured(),requires:s.requires}))});
+ // A supplier with no API or partner feed can still be compared: the employee reads the offer on the
+ // supplier's own site, in a browser the owner can watch, and records only what the page showed. It is
+ // marked as read from the site and as a weak match, and it can never be bought through checkout --
+ // no supplier connection stands behind it to quote an exact total. The owner buys it on the site.
+ t.register({id:'offer_record',effect:'write',description:"Add an offer you read yourself on a supplier's website to a price comparison. Record only what the page showed and leave out anything it did not; set requestId to add to an existing comparison.",
+  schema:z.object({requestId:z.string().optional(),supplier:z.string().min(1).max(100),product:z.string().min(1).max(300),url:z.string().url().refine(u=>/^https?:\/\//i.test(u),'A web address of the offer'),
+   unitPrice:z.number().nonnegative(),quantity:z.number().int().min(1).max(1000).default(1),currency:z.string().length(3).default('USD'),sku:z.string().max(100).optional(),
+   availability:z.string().max(200).optional(),shipping:z.number().nonnegative().optional(),tax:z.number().nonnegative().optional(),
+   pickup:z.string().max(200).optional(),delivery:z.string().max(200).optional()}),
+  run:async(a,c)=>{
+   const existing=a.requestId?db.get(c.owner,'material',a.requestId):undefined;
+   if(a.requestId&&!existing)throw Error('That comparison was not found');
+   const request=existing??db.create(c.owner,'material',{description:a.product,specification:'',quantity:a.quantity,currency:a.currency,runId:c.runId});
+   const supplierId=`browser:${a.supplier.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'')||'site'}`,observedAt=new Date().toISOString();
+   const offer=offerSchema.parse({supplierId,supplier:a.supplier,method:'browser',sku:a.sku??'not shown',product:a.product,url:a.url,quantity:a.quantity,unitPrice:a.unitPrice,currency:a.currency,
+    shipping:a.shipping??null,tax:a.tax??null,availability:a.availability??'unconfirmed',observedAt,matchQuality:'unverified',confidence:0.4,
+    pickup:{available:a.pickup?true:null,eta:a.pickup??'',location:''},delivery:{available:a.delivery?true:null,eta:a.delivery??'',location:''}});
+   const saved=db.create(c.owner,'offer',{...offer,requestId:request.id,runId:c.runId});
+   // The comparison names every supplier it covers, so one read from a website is counted like any other.
+   const current=db.get(c.owner,'material',request.id)!,others=(current.suppliers??[]).filter((x:any)=>x.id!==supplierId);
+   const count=db.list(c.owner,'offer').filter(o=>o.requestId===request.id&&o.supplierId===supplierId).length;
+   db.put(c.owner,'material',{...current,suppliers:[...others,{id:supplierId,name:a.supplier,method:'browser',status:'ok',offers:count,checkedAt:observedAt}],searchedAt:observedAt});
+   const all=db.list(c.owner,'offer').filter(o=>o.requestId===request.id);
+   return {requestId:request.id,offerId:saved.id,offers:compareOffers(all as unknown as Offer[],a.currency),
+    note:'Read from the website: it cannot be bought through checkout. The owner can buy it on the site, and can take the browser over to do it.'};
+  }});
  t.register({id:'cart_build',description:'Save selected products in a cart for review',effect:'write',schema:z.object({offerIds:z.array(z.string()).min(1).max(30)}),run:async(a,c)=>{const items=a.offerIds.map((id:string)=>db.get(c.owner,'offer',id));if(items.some((x:any)=>!x))throw Error('Offer not found');
   // A cart spanning suppliers cannot be one quote; each supplier quotes its own.
   return db.create(c.owner,'cart',{items,runId:c.runId,status:'draft',suppliers:[...new Set(items.map((i:any)=>i.supplierId))]});}});
