@@ -6,7 +6,7 @@ credential this environment does not have, that is stated rather than implied.
 ## What runs without any credential
 
 ```bash
-cd gateway && npm ci && npx tsc --noEmit && npm test     # 125 tests
+cd gateway && npm ci && npx tsc --noEmit && npm test     # 126 tests
 cd web     && npm ci && npm run verify                   # build + 102 tests
 ```
 
@@ -28,7 +28,7 @@ python3 -m venv .hermes-venv
 ./.hermes-venv/bin/pip install hermes-agent==0.19.0
 export HERMES_CHECKOUT="$(./.hermes-venv/bin/python -c 'import sysconfig;print(sysconfig.get_paths()["purelib"])')"
 export HERMES_PYTHON="$PWD/.hermes-venv/bin/python"
-cd gateway && npm test                                   # 124 passed, 1 skipped (Claude Code, below)
+cd gateway && npm test                                   # 125 passed, 1 skipped (Claude Code, below)
 ```
 
 `HERMES_CHECKOUT` must be the directory containing `run_agent.py`; for a pip
@@ -279,7 +279,7 @@ as a pass.
 | Suite | Command | Result |
 |---|---|---|
 | Gateway typecheck | `npx tsc --noEmit` | clean |
-| Gateway tests | `npm test` | 124 passed, 0 failed, 1 skipped (125 tests); the skip is the real Claude Code test, for the reason above |
+| Gateway tests | `npm test` | 125 passed, 0 failed, 1 skipped (126 tests); the skip is the real Claude Code test, for the reason above |
 | Web typecheck + build | `npm run build` | clean; entry 38.8 kB, 13.0 kB gzipped |
 | Web tests | `npm test` | 102 passed (9 files) |
 | End-to-end | `npm run e2e` | 119 passed |

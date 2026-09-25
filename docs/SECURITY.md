@@ -112,6 +112,12 @@ trace carrying a header. Cycles and deep nesting are handled rather than hanging
 No credential is stored in the client or shipped in its bundle. The realtime API
 secret stays on the server; the phone receives only a 15-minute room token.
 
+OAuth state for app connections is signed with `STATE_SECRET`. In production
+the gateway refuses to start unless it is at least 32 characters; outside
+production an unset or empty value falls back to a development-only secret,
+and is never used as an empty signing key (`security.test.ts`). The example
+environment files carry no placeholder credentials to copy by accident.
+
 ## Messages and calls
 
 An outbound message or call is the model acting on the world through a contact

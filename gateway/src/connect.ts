@@ -24,8 +24,10 @@ import { appHealth, invalidateAppHealth } from "./health.js";
 
 const STATE_TTL_MS = 10 * 60 * 1000;
 
-function stateSecret(): string {
-  return process.env.STATE_SECRET ?? "dev-only-insecure-state-secret";
+export function stateSecret(): string {
+  // Empty counts as unset: an empty HMAC key would make every state forgeable.
+  // Production refuses to start without a real one (validateEmployeeConfig).
+  return process.env.STATE_SECRET || "dev-only-insecure-state-secret";
 }
 
 interface StatePayload {

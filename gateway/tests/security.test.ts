@@ -1,6 +1,6 @@
 import {test} from 'node:test';import assert from 'node:assert/strict';import {mkdtempSync,rmSync,readFileSync,statSync} from 'node:fs';import os from 'node:os';import path from 'node:path';
 import sharp from 'sharp';
-import {Store} from '../src/employee/db.js';import {saveAttachment} from '../src/employee/artifacts.js';import {redact,redactText,processSecrets} from '../src/employee/redact.js';
+import {Store} from '../src/employee/db.js';import {saveAttachment} from '../src/employee/artifacts.js';import {redact,redactText,processSecrets} from '../src/employee/redact.js';import {validateEmployeeConfig} from '../src/employee/config.js';import {stateSecret} from '../src/connect.js';
 
 /** A genuinely valid PNG, so the decoder is exercised rather than a malformed-input path. */
 const png=()=>sharp({create:{width:8,height:8,channels:3,background:{r:10,g:20,b:30}}}).png().toBuffer();
@@ -91,4 +91,20 @@ test('redaction survives cycles and deep nesting instead of hanging',()=>{
  assert.equal(out.self,'[circular]');
  let deep:any='leaf';for(let i=0;i<20;i++)deep={next:deep};
  assert.doesNotThrow(()=>redact(deep,[]));
+});
+
+// OAuth state carries who is connecting which app. Signed with a secret anyone
+// can read in this repository, or with an empty key, it could be forged to put
+// one person's app credential into someone else's account.
+test('production refuses to start without a real STATE_SECRET, and an empty one never signs',()=>{
+ const saved={NODE_ENV:process.env.NODE_ENV,STATE_SECRET:process.env.STATE_SECRET,PUBLIC_BASE_URL:process.env.PUBLIC_BASE_URL};
+ try{
+  process.env.NODE_ENV='production';process.env.PUBLIC_BASE_URL='https://visionclaw.example.test';
+  delete process.env.STATE_SECRET;assert.throws(()=>validateEmployeeConfig(),/STATE_SECRET/);
+  process.env.STATE_SECRET='generate-a-random-string';assert.throws(()=>validateEmployeeConfig(),/STATE_SECRET/,'a short or placeholder secret is refused');
+  process.env.STATE_SECRET='0123456789abcdef'.repeat(4);assert.doesNotThrow(()=>validateEmployeeConfig());
+  process.env.NODE_ENV='development';process.env.STATE_SECRET='';
+  assert.doesNotThrow(()=>validateEmployeeConfig(),'development still starts without one');
+  assert.notEqual(stateSecret(),'','an empty secret is treated as unset, never used as the key');
+ }finally{for(const [k,v] of Object.entries(saved))if(v===undefined)delete process.env[k];else process.env[k]=v;}
 });

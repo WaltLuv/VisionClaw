@@ -107,6 +107,7 @@ Every variable the code reads is listed by category, with what it does, in
 the repository-root `.env.example`.
 
 Invalid values for `AGENT_RUNTIME`, `RUN_CAPACITY`, `COMPUTER_CAPACITY`,
-`BROWSER_LIVE_VIEW_HOSTS` (it becomes part of the page's Content-Security-Policy)
-and a non-HTTPS production `PUBLIC_BASE_URL` are rejected at startup rather than
+`BROWSER_LIVE_VIEW_HOSTS` (it becomes part of the page's Content-Security-Policy),
+a non-HTTPS production `PUBLIC_BASE_URL` and a missing or short (under 32
+characters) production `STATE_SECRET` are rejected at startup rather than
 surfacing later as a confusing failure.

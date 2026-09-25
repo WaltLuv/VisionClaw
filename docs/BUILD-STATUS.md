@@ -13,7 +13,7 @@ Exact commands, results and per-criterion labels are in `docs/TESTING.md`.
 
 ## Verified in this checkout
 
-- Gateway typecheck clean; **124 of 125 tests pass, 1 skipped**. The skip is the real-binary Claude Code test, which refuses to run
+- Gateway typecheck clean; **125 of 126 tests pass, 1 skipped**. The skip is the real-binary Claude Code test, which refuses to run
   inside a Claude Code cloud session with a network; offline it ran, and its
   startup contract passed.
 - Web client typechecks and builds; **102/102 tests pass** across 9 files.
@@ -136,6 +136,15 @@ Every mapping is overridable per deployment.
 
 ## Fixed in this pass
 
+- **App-connection OAuth state could be forged in production.** Without
+  `STATE_SECRET` the gateway signed it with a constant that is in this
+  repository, and an empty value signed with an empty key, so someone could
+  have put their own app credential into another person's account. Production
+  now refuses to start without a secret of at least 32 characters, an empty
+  value is never used as a key, and `gateway/.env.example` no longer ships
+  placeholder values that took effect if copied unchanged: `change-me-token`
+  worked as an access code, `generate-a-random-string` as a guessable secret,
+  and `sk-ant-...` made the Anthropic runtime look configured.
 - **The employee could only hand a whole browsing job away.** With
   `BROWSERBASE_API_KEY` it now drives a real browser one step at a time
   through governed tools, and the owner can watch it live and take it over:
