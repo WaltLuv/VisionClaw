@@ -67,8 +67,13 @@ ANTHROPIC_API_KEY=...
 ```
 
 Hermes' own names apply (`anthropic`, `gemini`, `openai-api`, `openai-codex`,
-`xai`, `deepseek`, `nous` and others). For any OpenAI-compatible endpoint, set
-`HERMES_BASE_URL` and `HERMES_API_KEY` instead. Besides those settings, the only
+`xai`, `deepseek`, `nous` and others). For any OpenAI-compatible endpoint,
+including a model on this machine through Ollama, LM Studio or vLLM, set
+`HERMES_PROVIDER=custom`, `HERMES_BASE_URL` (Ollama's is
+`http://127.0.0.1:11434/v1`), `HERMES_MODEL`, and `HERMES_API_KEY` (any value if
+the endpoint takes none). That is how the end-to-end suite runs Hermes. Small
+local models are often weak at using tools, so try a real task before relying
+on one. Besides those settings, the only
 keys handed to Hermes are `OPENAI_API_KEY`, `OPENROUTER_API_KEY`,
 `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY` and `GEMINI_API_KEY` (and proxy settings,
 if the machine uses a proxy). Without `HERMES_PROVIDER`,
