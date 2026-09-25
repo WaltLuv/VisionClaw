@@ -124,4 +124,21 @@ export class BrowserCapability{
  }
  register(t:ToolGateway){t.register({id:'browser_work',description:'Use a fresh browser for this specific web task',effect:'computer',schema:z.object({task:z.string().min(1).max(8000)}),run:async(a,c)=>this.execute(a.task,c)});}
  async cleanup(){for(const {owner,data:r} of this.db.all('computer'))if(!closed.includes(r.status)&&terminal.has(this.db.get(owner,'run',r.runId)?.status)){if(r.provider==='browserbase'&&this.driven)await this.driven.release(owner,r.id,'closed');else await this.cancel(owner,r.id);}}
+ /**
+  * After a restart nothing drives or watches a browser that was open, so none can be kept. Left alone, one
+  * stale record holds the only slot, and an old queued one holds up every browser request behind it. Each is
+  * stopped at its provider and its slot freed. One that cannot be confirmed stopped is tried once more a
+  * minute later -- only those, never a browser started since -- and then let go, with a log line naming it.
+  */
+ async recover(retryMs=60_000){
+  const stale=this.db.all('computer').filter(x=>!closed.includes(x.data.status)).map(x=>({owner:x.owner,id:x.data.id as string}));
+  const open=()=>stale.filter(({owner,id})=>!closed.includes(this.db.get(owner,'computer',id)?.status));
+  for(const {owner,id} of stale)await this.cancel(owner,id).catch(()=>{});
+  if(!open().length)return;
+  await new Promise(r=>setTimeout(r,retryMs).unref());
+  for(const {owner,id} of open()){
+   await this.cancel(owner,id).catch(()=>{});
+   if(!closed.includes(this.db.get(owner,'computer',id)?.status)){console.error(JSON.stringify({event:'employee.browser_orphaned',computerId:id}));this.end(owner,id,'cancelled');}
+  }
+ }
 }

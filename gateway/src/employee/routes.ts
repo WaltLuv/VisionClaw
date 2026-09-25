@@ -10,7 +10,7 @@ export function installEmployee(app:Express,resolve:ResolveUser,validGrant:Grant
   const result=run.browserTask?{result:String((await tools.wait(owner,run.id,'browser_work',{task:run.task},run.id,signal)).text)}:await runtimes[runtime as keyof typeof runtimes].run(owner,run,signal);
   if(!signal.aborted){const u=await userResources(owner);u.recentTasks=[...(u.recentTasks??[]),{ts:new Date().toISOString(),prompt:run.task.slice(0,300),result:result.result.slice(0,500)}].slice(-20);await saveStore();notifyUser(owner,result.result);}
   return result;
- }),Number(process.env.RUN_CAPACITY??2));q.recover();
+ }),Number(process.env.RUN_CAPACITY??2));q.recover();void browser.recover().catch(()=>{});
  const cookie=(req:Request)=>session(db,req,validGrant),cookieUser=(req:Request)=>cookie(req)?.owner??null,current=(req:Request)=>cookieUser(req)??resolve(req);
  app.use((req,res,next)=>{const s=cookie(req);if(s&&!['GET','HEAD','OPTIONS'].includes(req.method)&&!req.path.startsWith('/webhooks/')&&req.header('x-csrf-token')!==s.csrf){res.status(403).json({error:{message:'Please refresh your session before trying again.'}});return;}next();});
  const router=express.Router();router.post('/auth/login',rateLimit({windowMs:60000,limit:10,standardHeaders:true,legacyHeaders:false}),(req,res)=>{const token=z.string().min(1).max(1000).parse(req.body?.token),owner=resolve(req,token);if(!owner){res.status(401).json({error:{message:'Unable to verify that access code.'}});return;}seedEmployee(db,owner);res.json({owner,csrf:issueSession(db,res,owner,token)});});

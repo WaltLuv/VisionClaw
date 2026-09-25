@@ -1,5 +1,5 @@
 import {test} from 'node:test';import assert from 'node:assert/strict';import {createServer} from 'node:http';import express from 'express';import {mkdtempSync,rmSync} from 'node:fs';import os from 'node:os';import path from 'node:path';
-import {Store} from '../src/employee/db.js';import {BrowserCapability,embeddableLiveUrl,validLiveViewHosts,liveFrameSources,browserClock} from '../src/employee/browser.js';import {installEmployee} from '../src/employee/routes.js';import {tokenHash} from '../src/employee/auth.js';import {initStore} from '../src/store.js';
+import {Store} from '../src/employee/db.js';import {BrowserCapability,embeddableLiveUrl,validLiveViewHosts,liveFrameSources,browserClock,waitForBrowserSlot} from '../src/employee/browser.js';import {installEmployee} from '../src/employee/routes.js';import {tokenHash} from '../src/employee/auth.js';import {initStore} from '../src/store.js';
 
 /**
  * Watching the employee browse, and taking the browser from it. The stand-in
@@ -222,4 +222,49 @@ test('the phone app may frame a live view host and nothing else, and still runs 
  assert.doesNotMatch(csp,/frame-src[^;]*https:;/,'no longer any https page at all');
  assert.match(csp,/script-src 'self';/);
  assert.match(csp,/frame-ancestors 'none'/,'and nobody may frame the app itself');
+});
+
+// A restart leaves nothing driving or watching a browser that was open. Its record must not keep the only slot,
+// and an old queued request must not hold up every browser request behind it.
+test('after a restart, browsers left open are stopped at their provider and their slots freed',async t=>{
+ const svc=await browserUse(),restore=env(svc),db=new Store(':memory:'),released:string[]=[];
+ const driven={release:async(owner:string,id:string,status:'closed'|'cancelled')=>{released.push(id);const {liveUrl:_u,liveEmbed:_e,...rest}=db.get(owner,'computer',id)!;db.put(owner,'computer',{...rest,status});}};
+ t.after(async()=>{restore();db.close();await svc.close();});
+ const LIVE='https://live.browser-use.com/view?session=abc',BB='https://www.browserbase.com/devtools/view';svc.status['bu-7']='running';
+ const working=db.create('alice','computer',{runId:'run-1',status:'working',providerId:'bu-7',providerSession:'sess-1',control:'agent',liveUrl:LIVE,liveEmbed:LIVE});
+ const queued=db.create('bob','computer',{runId:'run-2',status:'queued',task:'Look'});
+ const driving=db.create('alice','computer',{runId:'run-3',status:'working',provider:'browserbase',providerId:'bb-1',control:'owner',liveUrl:BB,liveEmbed:BB});
+ const done=db.create('alice','computer',{runId:'run-4',status:'closed'});
+ await new BrowserCapability(db,driven).recover(20);
+ assert.deepEqual(svc.calls,['cancel:bu-7'],'the Browser Use run is stopped at the provider');
+ assert.deepEqual(released,[driving.id],'the Browserbase session is released');
+ for(const [owner,id] of [['alice',working.id],['bob',queued.id],['alice',driving.id]] as const){
+  const r=db.get(owner,'computer',id)!;assert.ok(['cancelled','closed'].includes(r.status),`${id} is no longer open`);assert.equal(r.liveEmbed,undefined,'and nobody holds its live link');
+ }
+ assert.equal(db.get('alice','computer',done.id)?.status,'closed','a browser already closed is left alone');
+ const ticket=db.create('carol','computer',{runId:'run-5',status:'queued'});
+ await waitForBrowserSlot(db,ticket,()=>{},Date.now()+1000);   // throws if anything from before the restart still holds the queue
+});
+
+test('after a restart, a browser that cannot be confirmed stopped is tried once more, then let go',async t=>{
+ const svc=await browserUse(),restore=env(svc),db=new Store(':memory:');
+ t.after(async()=>{restore();db.close();await svc.close();});
+ svc.status['bu-9']='running';svc.refuse.add('cancel');
+ const stale=db.create('alice','computer',{runId:'run-1',status:'working',providerId:'bu-9',control:'agent'});
+ const recovering=new BrowserCapability(db).recover(300);
+ await waitFor(()=>db.get('alice','computer',stale.id)?.status==='cleanup_pending','the first attempt');
+ const fresh=db.create('alice','computer',{runId:'run-2',status:'working',providerId:'bu-10',control:'agent'});
+ await recovering;
+ assert.deepEqual(svc.calls,['cancel:bu-9','cancel:bu-9'],'tried twice, and nothing started since was touched');
+ assert.equal(db.get('alice','computer',stale.id)?.status,'cancelled','then its slot is freed');
+ assert.equal(db.get('alice','computer',fresh.id)?.status,'working','a browser started after the restart keeps running');
+});
+
+test('the gateway frees browsers left open by its previous process when it starts',async t=>{
+ const svc=await browserUse(),restore=env(svc);
+ const dir=mkdtempSync(path.join(os.tmpdir(),'vc-browser-boot-'));process.env.EMPLOYEE_DATA_DIR=dir;process.env.EMPLOYEE_DB_PATH=path.join(dir,'employee.sqlite');initStore(path.join(dir,'legacy.json'));
+ const before=new Store(process.env.EMPLOYEE_DB_PATH);const left=before.create('alice','computer',{runId:'run-1',status:'queued',task:'Look'});before.close();
+ const e=installEmployee(express(),()=>null,()=>false,async()=>({result:'ok'}));
+ t.after(async()=>{e.stop();e.db.close();rmSync(dir,{recursive:true,force:true});delete process.env.EMPLOYEE_DB_PATH;delete process.env.EMPLOYEE_DATA_DIR;restore();await svc.close();});
+ await waitFor(()=>e.db.get('alice','computer',left.id)?.status==='cancelled','the stale browser to be freed');
 });
