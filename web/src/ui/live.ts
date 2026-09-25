@@ -25,7 +25,8 @@ let lastControl: Computer['control'];
 let view: ReturnType<typeof build> | null = null;
 
 function build() {
-  const frame = h('iframe', {class: 'live-frame', title: "Your employee's browser", referrerpolicy: 'no-referrer', sandbox: 'allow-scripts allow-same-origin allow-forms'});
+  // `allow="autoplay"` is what Browser Use's own embed example sets for its live view.
+  const frame = h('iframe', {class: 'live-frame', title: "Your employee's browser", referrerpolicy: 'no-referrer', allow: 'autoplay', sandbox: 'allow-scripts allow-same-origin allow-forms'});
   const shield = h('div', {class: 'live-shield', title: 'Take over to use this browser yourself'});
   const message = h('p', {class: 'live-message'});
   const status = h('p', {class: 'live-status', role: 'status', 'aria-live': 'polite'});

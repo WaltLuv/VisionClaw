@@ -13,12 +13,12 @@ Exact commands, results and per-criterion labels are in `docs/TESTING.md`.
 
 ## Verified in this checkout
 
-- Gateway typecheck clean; **117 of 118 tests pass, 1 skipped** across 14
+- Gateway typecheck clean; **121 of 122 tests pass, 1 skipped** across 14
   files. The skip is the real-binary Claude Code test, which refuses to run
   inside a Claude Code cloud session with a network; offline it ran, and its
   startup contract passed.
 - Web client typechecks and builds; **101/101 tests pass** across 9 files.
-- **108/108 end-to-end checks pass** against a real gateway in a real browser at a
+- **111/111 end-to-end checks pass** against a real gateway in a real browser at a
   phone viewport, with a synthetic camera and microphone and two configured
   suppliers, one of which is deliberately down.
 
@@ -96,7 +96,7 @@ used. Per-criterion detail and how to reproduce each suite is in
 | 5 | Hermes selection through the official runtime | IMPLEMENTED + VERIFIED |
 | 5a | Anthropic Managed Agents runtime, same governance | IMPLEMENTED + VERIFIED against a protocol fixture; live Anthropic account BLOCKED ON OWNER CREDENTIAL |
 | 5c | Claude Code on the owner's own subscription, same governance | IMPLEMENTED + VERIFIED against a stand-in CLI through the real bridge; startup contract VERIFIED with the real binary offline; the full loop with the real binary and a real login is for the server (`npm test -- tests/claude.test.ts`, then `deploy/doctor.sh --live`) |
-| 13 | Watch the employee browse and take the browser over | IMPLEMENTED + VERIFIED in a real browser against a stand-in Browser Use; the live service's pause/resume paths and live-view host are unconfirmed; live account BLOCKED ON OWNER CREDENTIAL |
+| 13 | Watch the employee browse and take the browser over | IMPLEMENTED + VERIFIED in a real browser against a stand-in shaped like Browser Use's v4 API (confirmed from its official SDK); that a stopped run's browser stays open for the owner is implied by Browser Use's session design but unconfirmed; live account BLOCKED ON OWNER CREDENTIAL |
 | 5b | Codex through a supported server-side provider path | IMPLEMENTED + BLOCKED ON OWNER CREDENTIAL — only the credential boundary is verified |
 | 6 | SMS draft / approval / send / inbound status | IMPLEMENTED + VERIFIED against fixtures; live account BLOCKED ON OWNER CREDENTIAL |
 | 7 | Outbound call objective / status / transcript / outcome | IMPLEMENTED + VERIFIED against fixtures; live account BLOCKED ON OWNER CREDENTIAL |
@@ -185,9 +185,11 @@ Every mapping is overridable per deployment.
 - Claude Code's full model loop with the real binary has not run anywhere
   yet: in this sandbox the CLI is bound to the session's own account, so the
   test refuses to spend it. It runs on the server.
-- Browser Use's v4 pause/resume paths and its live-view host are unconfirmed
-  against the live service (its documentation was unreachable from here).
-  Wrong either way, take-over fails safe and the phone says why.
+- Take-over first called `/pause` and `/resume`, which Browser Use's v4 API
+  does not have; checked against its official SDK, it now stops the
+  employee's run and hands back with a follow-up run in the same session.
+  That the session's browser stays open in between is implied by Browser
+  Use's design, not stated; if not, hand-back continues in a fresh browser.
 - No live Anthropic account has been used. Every hosted-runtime test answers
   from a loopback fixture, which proves the protocol and the governance the
   gateway enforces, not that Anthropic's service behaves as documented.

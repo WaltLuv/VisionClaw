@@ -2,24 +2,37 @@ import {test} from 'node:test';import assert from 'node:assert/strict';import {c
 import {Store} from '../src/employee/db.js';import {BrowserCapability,embeddableLiveUrl,validLiveViewHosts,liveFrameSources,browserClock} from '../src/employee/browser.js';import {installEmployee} from '../src/employee/routes.js';import {tokenHash} from '../src/employee/auth.js';import {initStore} from '../src/store.js';
 
 /**
- * Watching the employee browse, and taking the browser from it. A stand-in
- * Browser Use service on loopback records every pause, resume and cancel, so
- * the tests can hold the gateway to one rule above all: it never tells the
- * owner they have the browser unless the provider actually paused the agent.
+ * Watching the employee browse, and taking the browser from it. The stand-in
+ * below behaves like Browser Use's v4 API as its official SDK defines it:
+ * runs can be created, polled and cancelled, but not paused; every run belongs
+ * to a session, and a follow-up run in the session reuses the session's live
+ * browser. The one rule above all: the gateway never tells the owner they have
+ * the browser unless the provider actually stopped the employee.
  */
-interface Service{url:string;calls:string[];status:string;refuse:Set<string>;live:string;close():Promise<void>}
+interface Service{url:string;calls:string[];created:any[];status:Record<string,string>;live:Record<string,string>;refuse:Set<string>;gate:Promise<void>|null;statusInFlight:number;close():Promise<void>}
 async function browserUse():Promise<Service>{
- const svc={calls:[] as string[],status:'running',refuse:new Set<string>(),live:'https://live.browser-use.com/view?session=abc'} as Service;
- const server=createServer((req,res)=>{
+ const svc={calls:[] as string[],created:[] as any[],status:{} as Record<string,string>,live:{} as Record<string,string>,refuse:new Set<string>(),gate:null,statusInFlight:0} as Service;
+ const LIVE='https://live.browser-use.com/view?session=abc';
+ const server=createServer(async(req,res)=>{
   const url=req.url??'',json=(code:number,v:unknown)=>{res.writeHead(code,{'content-type':'application/json'});res.end(JSON.stringify(v));};
-  req.resume();
-  if(req.method==='POST'&&url==='/api/v4/runs')return json(200,{id:'bu-1'});
-  const m=url.match(/^\/api\/v4\/runs\/([^/]+)(?:\/(\w+))?$/);if(!m)return json(404,{});
-  const [,,action]=m;
-  if(req.method==='POST'){svc.calls.push(action!);return svc.refuse.has(action!)?json(409,{detail:'refused'}):json(200,{});}
-  if(action==='events')return json(200,{events:[{type:'browser.ready',data:{live_view_url:svc.live}}]});
-  if(action==='status')return json(200,{status:svc.status});
-  return json(200,{status:svc.status,result:'Found it'});
+  let raw='';for await(const chunk of req)raw+=chunk;
+  if(req.method==='POST'&&url==='/api/v4/runs'){
+   if(svc.refuse.has('create'))return json(500,{detail:'refused'});
+   const body=JSON.parse(raw||'{}'),id=`bu-${svc.created.length+1}`;svc.created.push(body);svc.status[id]='running';svc.live[id]??=LIVE;
+   return json(200,{id,status:'queued',sessionId:body.sessionId??'sess-1',workspaceId:'ws-1',eventsUrl:`/runs/${id}/events`});
+  }
+  const m=url.match(/^\/api\/v4\/runs\/([^/]+)(?:\/(\w+))?$/);if(!m)return json(404,{detail:'Not Found'});
+  const [,id,action]=m;
+  if(req.method==='POST'){
+   if(action!=='cancel')return json(404,{detail:'Not Found'});   // v4 has no pause or resume
+   svc.calls.push(`cancel:${id}`);
+   if(svc.refuse.has('cancel'))return json(409,{detail:'refused'});
+   svc.status[id!]='cancelled';return json(200,{id,status:'cancelled'});
+  }
+  if(action==='events')return json(200,{events:[{type:'browser.ready',data:{live_view_url:svc.live[id!]}}],hasMore:false});
+  // A test can hold a status check open, to land a take-over while the answer is on its way.
+  if(action==='status'){svc.statusInFlight++;if(svc.gate)await svc.gate;svc.statusInFlight--;return json(200,{status:svc.status[id!]});}
+  return json(200,{id,status:svc.status[id!],result:svc.status[id!]==='completed'?`Found it (${id})`:null});
  });
  server.listen(0,'127.0.0.1');await new Promise<void>(r=>server.on('listening',()=>r()));
  svc.url=`http://127.0.0.1:${(server.address() as any).port}/api/v4`;
@@ -29,53 +42,114 @@ async function browserUse():Promise<Service>{
 const waitFor=async(check:()=>boolean,what:string,ms=15000)=>{const end=Date.now()+ms;while(Date.now()<end){if(check())return;await new Promise(r=>setTimeout(r,20));}throw Error(`Timed out waiting for ${what}`);};
 function env(svc:Service){const keys={BROWSER_USE_API_KEY:'fixture-key',BROWSER_USE_API_BASE:svc.url,BROWSER_POLL_MS:'20'},saved:Record<string,string|undefined>={};for(const [k,v] of Object.entries(keys)){saved[k]=process.env[k];process.env[k]=v;}return ()=>{for(const [k,v] of Object.entries(saved))if(v===undefined)delete process.env[k];else process.env[k]=v;};}
 const ctx=(owner='alice',runId='run-1')=>({owner,runId,actionId:'a1',assertAuthorized:()=>{}});
+const settle=()=>new Promise(r=>setTimeout(r,150));
 
 test('you can watch, take the browser, hand it back, and the live link is gone when the job ends',async t=>{
  const svc=await browserUse(),restore=env(svc),db=new Store(':memory:'),browser=new BrowserCapability(db);
  t.after(async()=>{restore();db.close();await svc.close();});
- const job=browser.execute('Find the part',ctx());
+ let ended=false;const job=browser.execute('Find the part',ctx());job.then(()=>{ended=true;},()=>{ended=true;});
  await waitFor(()=>!!db.list('alice','computer')[0]?.liveEmbed,'the live view');
  const id=db.list('alice','computer')[0].id;
  assert.equal(db.get('alice','computer',id)?.liveEmbed,'https://live.browser-use.com/view?session=abc');
  assert.equal(db.get('alice','computer',id)?.control,'agent','the employee drives until you take over');
+ assert.equal(db.get('alice','computer',id)?.providerSession,'sess-1','the Browser Use session is kept, so the browser can be handed back');
 
  assert.equal((await browser.control('alice',id,'owner'))?.control,'owner');
- assert.deepEqual(svc.calls,['pause'],'taking over pauses the agent at the provider');
+ assert.deepEqual(svc.calls,['cancel:bu-1'],'taking over stops the employee\'s current run at the provider');
+ await settle();
+ assert.equal(ended,false,'stopping the employee\'s run to hand you the browser does not end the task');
+ assert.equal(db.get('alice','computer',id)?.status,'working');
  await browser.control('alice',id,'owner');
- assert.deepEqual(svc.calls,['pause'],'a second tap does not pause twice');
+ assert.deepEqual(svc.calls,['cancel:bu-1'],'a second tap does not stop it twice');
  assert.equal(await browser.control('bob',id,'owner'),undefined,'someone else\'s browser does not exist for you');
 
  await new Promise(r=>setTimeout(r,30));
  const back=await browser.control('alice',id,'agent');
  assert.equal(back?.control,'agent');
- assert.deepEqual(svc.calls,['pause','resume']);
- assert.ok(back?.pausedMs>=30,'time with you is recorded so it does not count against the agent');
+ assert.equal(svc.created.length,2,'handing back starts a follow-up run');
+ assert.equal(svc.created[1].sessionId,'sess-1','in the same session, so Browser Use reuses the same live browser');
+ assert.match(svc.created[1].task,/handed it back[\s\S]*Find the part/,'told to carry on with the original objective from where the page is now');
+ assert.match(svc.created[1].task,/Stop before checkout/,'with the same guard rails as the first run');
+ assert.equal(svc.created[1].browserSettings,undefined,'a live browser is reused as-is, so no settings are re-sent');
+ assert.equal(back?.providerId,'bu-2');
+ assert.ok(back?.pausedMs>=30,'time with you is recorded so it does not count against the employee');
 
- svc.status='completed';
- assert.deepEqual(await job,{text:'Found it',computerId:id});
+ svc.status['bu-2']='completed';
+ assert.deepEqual(await job,{text:'Found it (bu-2)',computerId:id},'the result is the follow-up run\'s');
  const done=db.get('alice','computer',id)!;
  assert.equal(done.status,'completed');
  assert.equal(done.liveUrl,undefined,'a finished job keeps no key to its browser');
  assert.equal(done.liveEmbed,undefined);
 });
 
-test('the app never claims you have the browser when the provider did not pause it',async t=>{
+test('the app never claims you have the browser when the provider did not stop the employee',async t=>{
+ const svc=await browserUse(),restore=env(svc),db=new Store(':memory:'),browser=new BrowserCapability(db);
+ t.after(async()=>{restore();db.close();await svc.close();});
+ let ended=false;const job=browser.execute('Find the part',ctx());job.then(()=>{ended=true;},()=>{ended=true;});
+ await waitFor(()=>!!db.list('alice','computer')[0]?.liveEmbed,'the live view');
+ const id=db.list('alice','computer')[0].id;
+ svc.refuse.add('cancel');
+ await assert.rejects(()=>browser.control('alice',id,'owner'),/still driving/);
+ assert.equal(db.get('alice','computer',id)?.control,'agent','still the employee\'s: the stop was refused');
+ assert.equal(db.get('alice','computer',id)?.handover,undefined,'and nothing is left half-handed-over');
+ svc.refuse.delete('cancel');
+ await browser.control('alice',id,'owner');
+ svc.refuse.add('create');
+ await assert.rejects(()=>browser.control('alice',id,'agent'),/stays paused for you/);
+ assert.equal(db.get('alice','computer',id)?.control,'owner','still yours: the follow-up could not start');
+ await settle();
+ assert.equal(ended,false);
+ await browser.cancel('alice',id);
+ assert.equal(db.get('alice','computer',id)?.status,'cancelled','stopping while you hold the browser ends the job cleanly');
+ assert.equal(svc.calls.filter(c=>c==='cancel:bu-1').length,2,'no second run to cancel: the employee\'s was already stopped');
+ assert.equal(db.get('alice','computer',id)?.liveEmbed,undefined,'a cancelled job keeps no key to its browser');
+});
+
+test('a take-over that lands while a status check is on its way does not end the task',async t=>{
+ const svc=await browserUse(),restore=env(svc),db=new Store(':memory:'),browser=new BrowserCapability(db);
+ t.after(async()=>{restore();db.close();await svc.close();});
+ let ended=false;const job=browser.execute('Find the part',ctx());job.then(()=>{ended=true;},()=>{ended=true;});
+ await waitFor(()=>!!db.list('alice','computer')[0]?.liveEmbed,'the live view');
+ const id=db.list('alice','computer')[0].id;
+ let open!:()=>void;svc.gate=new Promise<void>(r=>{open=r;});
+ await waitFor(()=>svc.statusInFlight>0,'a status check in flight');
+ await browser.control('alice',id,'owner');
+ open();svc.gate=null;
+ await settle();
+ assert.equal(ended,false,'the "cancelled" that check brings back was the take-over, not the end of the task');
+ assert.equal(db.get('alice','computer',id)?.status,'working');
+ assert.equal(db.get('alice','computer',id)?.control,'owner');
+ await browser.cancel('alice',id);
+});
+
+test('a browser with no Browser Use session cannot be taken over, because it could not be handed back',async t=>{
+ const svc=await browserUse(),restore=env(svc),db=new Store(':memory:'),browser=new BrowserCapability(db);
+ t.after(async()=>{restore();db.close();await svc.close();});
+ const c=db.put('alice','computer',{id:'comp-1',runId:'run-1',status:'working',providerId:'bu-9',control:'agent'});
+ await assert.rejects(()=>browser.control('alice',c.id,'owner'),/can't be handed over/);
+ assert.deepEqual(svc.calls,[],'the employee is not stopped for a hand-over that could never be returned');
+});
+
+test('stopping a run that had already finished is not left as a browser to clean up',async t=>{
+ const svc=await browserUse(),restore=env(svc),db=new Store(':memory:'),browser=new BrowserCapability(db);
+ t.after(async()=>{restore();db.close();await svc.close();});
+ svc.status['bu-7']='completed';svc.refuse.add('cancel');
+ db.put('alice','computer',{id:'comp-7',runId:'run-1',status:'working',providerId:'bu-7',control:'agent'});
+ await browser.cancel('alice','comp-7');
+ assert.equal(db.get('alice','computer','comp-7')?.status,'cancelled','not cleanup_pending, which would hold the only browser slot');
+});
+
+test('if a follow-up run gets a different browser, the phone is given that one to show',async t=>{
  const svc=await browserUse(),restore=env(svc),db=new Store(':memory:'),browser=new BrowserCapability(db);
  t.after(async()=>{restore();db.close();await svc.close();});
  const job=browser.execute('Find the part',ctx());job.catch(()=>{});
  await waitFor(()=>!!db.list('alice','computer')[0]?.liveEmbed,'the live view');
  const id=db.list('alice','computer')[0].id;
- svc.refuse.add('pause');
- await assert.rejects(()=>browser.control('alice',id,'owner'),/still driving/);
- assert.equal(db.get('alice','computer',id)?.control,'agent','still the employee\'s: the pause was refused');
- svc.refuse.delete('pause');
  await browser.control('alice',id,'owner');
- svc.refuse.add('resume');
- await assert.rejects(()=>browser.control('alice',id,'agent'),/stays paused for you/);
- assert.equal(db.get('alice','computer',id)?.control,'owner','still yours: the resume was refused');
+ svc.live['bu-2']='https://live.browser-use.com/view?session=fresh';
+ await browser.control('alice',id,'agent');
+ await waitFor(()=>db.get('alice','computer',id)?.liveEmbed==='https://live.browser-use.com/view?session=fresh','the new live view');
  await browser.cancel('alice',id);
- assert.ok(svc.calls.includes('cancel'),'stopping works even while you hold the browser');
- assert.equal(db.get('alice','computer',id)?.liveEmbed,undefined,'a cancelled job keeps no key to its browser');
 });
 
 test('only a browser provider\'s own https pages are offered for embedding',async t=>{
@@ -96,7 +170,7 @@ test('only a browser provider\'s own https pages are offered for embedding',asyn
 test('a live view from a host that is not allowed is kept for the glasses apps but not offered to the phone',async t=>{
  const svc=await browserUse(),restore=env(svc),db=new Store(':memory:'),browser=new BrowserCapability(db);
  t.after(async()=>{restore();db.close();await svc.close();});
- svc.live='https://cdn.other.net/view?s=9';
+ svc.live['bu-1']='https://cdn.other.net/view?s=9';
  const job=browser.execute('Find the part',ctx());job.catch(()=>{});
  await waitFor(()=>!!db.list('alice','computer')[0]?.liveHost,'the live view');
  const r=db.list('alice','computer')[0];
@@ -124,7 +198,8 @@ test('HTTP: take-over needs your session and CSRF token, and is invisible to ano
  t.after(async()=>{e.stop();server.closeAllConnections();await new Promise<void>(r=>server.close(()=>r()));e.db.close();rmSync(dir,{recursive:true,force:true});delete process.env.EMPLOYEE_DB_PATH;delete process.env.EMPLOYEE_DATA_DIR;restore();await svc.close();});
  const login=async(token:string)=>{const r=await fetch(base+'/api/auth/login',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({token})});return {cookie:r.headers.get('set-cookie')!.split(';')[0],csrf:(await r.json()).csrf as string};};
  const a=await login('fixture-a'),b=await login('fixture-b');
- const c=e.db.put('alice','computer',{id:'comp-1',runId:'run-1',status:'working',providerId:'bu-1',control:'agent',liveUrl:'https://live.browser-use.com/v?s=1',liveEmbed:'https://live.browser-use.com/v?s=1'});
+ svc.status['bu-0']='running';
+ const c=e.db.put('alice','computer',{id:'comp-1',runId:'run-1',status:'working',providerId:'bu-0',providerSession:'sess-1',control:'agent',liveUrl:'https://live.browser-use.com/v?s=1',liveEmbed:'https://live.browser-use.com/v?s=1'});
  const post=(p:string,s:{cookie:string;csrf?:string})=>fetch(base+p,{method:'POST',headers:{'content-type':'application/json',cookie:s.cookie,...(s.csrf?{'x-csrf-token':s.csrf}:{})},body:'{}'});
  assert.equal((await post(`/api/computers/${c.id}/takeover`,{cookie:a.cookie})).status,403,'no CSRF token, no take-over');
  assert.equal((await post(`/api/computers/${c.id}/takeover`,b)).status,404,'another owner cannot even tell it exists');
@@ -133,8 +208,9 @@ test('HTTP: take-over needs your session and CSRF token, and is invisible to ano
  const body=await ok.json();assert.deepEqual(body,{id:'comp-1',status:'working',control:'owner'});
  assert.equal(JSON.stringify(body).includes('live.browser-use.com'),false,'the reply does not repeat the live link');
  assert.equal((await post(`/api/computers/${c.id}/handback`,a)).status,200);
- assert.deepEqual(svc.calls,['pause','resume']);
- svc.refuse.add('pause');
+ assert.deepEqual(svc.calls,['cancel:bu-0'],'taking over stopped the employee\'s run');
+ assert.equal(svc.created[0]?.sessionId,'sess-1','handing back started a follow-up in the same session');
+ svc.refuse.add('cancel');
  const refused=await post(`/api/computers/${c.id}/takeover`,a);assert.equal(refused.status,409);
  assert.match((await refused.json()).error.message,/still driving/);
 });

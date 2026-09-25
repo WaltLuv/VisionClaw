@@ -29,6 +29,8 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 export interface BrowseStart {
   runId: string;
   liveUrl: string | null;
+  /** The v4 session the run belongs to. Follow-up runs in it reuse its live browser. */
+  sessionId: string | null;
 }
 
 /**
@@ -36,7 +38,7 @@ export interface BrowseStart {
  * (a few seconds), so the caller can show it while the task runs. record:true
  * means a replay mp4 is retrievable afterward. maxCostUsd bounds spend.
  */
-export async function startBrowse(task: string, onCreated?:(id:string)=>void, signal?:AbortSignal): Promise<BrowseStart> {
+export async function startBrowse(task: string, onCreated?:(id:string,sessionId:string|null)=>void, signal?:AbortSignal): Promise<BrowseStart> {
   signal?.throwIfAborted();
   const cap = Number(process.env.BROWSER_USE_MAX_COST_USD ?? 0.75);
   const model = process.env.BROWSER_USE_MODEL; // omit -> Browser Use default (cheapest/fastest)
@@ -65,9 +67,10 @@ export async function startBrowse(task: string, onCreated?:(id:string)=>void, si
   if (!create.ok) {
     throw new Error(`Browser service returned HTTP ${create.status}`);
   }
-  const created = (await create.json()) as { id: string };
+  const created = (await create.json()) as { id: string; sessionId?: string };
   const runId = created.id;
-  onCreated?.(runId);
+  const sessionId = created.sessionId ?? null;
+  onCreated?.(runId, sessionId);
 
   // The embeddable live-view URL for an agent run lives in the RUN EVENT STREAM
   // (browser.ready / browser.attached -> data.live_view_url), not on the run or
@@ -93,7 +96,43 @@ export async function startBrowse(task: string, onCreated?:(id:string)=>void, si
       // transient; keep trying within the window
     }
   }
-  return { runId, liveUrl };
+  return { runId, liveUrl, sessionId };
+}
+
+/**
+ * A follow-up turn in an existing v4 session. Browser Use documents that a
+ * session "can reuse its live browser" and that passing its sessionId resumes
+ * work "in the same browser across multiple follow-up runs"; browser settings
+ * are owned by the browser, and "a live browser is reused as-is", so none are
+ * sent here. Returns the new run's id.
+ */
+export async function continueBrowse(sessionId: string, task: string): Promise<string> {
+  const model = process.env.BROWSER_USE_MODEL;
+  const create = await fetch(`${browserUseBase()}/runs`, {
+    method: "POST",
+    signal: AbortSignal.timeout(30000),
+    headers: buHeaders(),
+    body: JSON.stringify({
+      task,
+      sessionId,
+      agentmail: false,
+      ...(model ? { model } : {}),
+      maxCostUsd: Number(process.env.BROWSER_USE_MAX_COST_USD ?? 0.75),
+    }),
+  });
+  if (!create.ok) throw new Error(`Browser service returned HTTP ${create.status}`);
+  return ((await create.json()) as { id: string }).id;
+}
+
+/** The live-view link a run reports once its browser is up or attached, if any yet. */
+export async function runLiveUrl(runId: string): Promise<string | null> {
+  const ev = await fetch(`${browserUseBase()}/runs/${runId}/events`, { headers: buHeaders(), signal: AbortSignal.timeout(15000) });
+  if (!ev.ok) return null;
+  const { events } = (await ev.json()) as { events?: Array<{ type?: string; data?: { live_view_url?: string | null } }> };
+  for (const e of events ?? []) {
+    if ((e.type === "browser.ready" || e.type === "browser.attached") && e.data?.live_view_url) return e.data.live_view_url;
+  }
+  return null;
 }
 
 /** A readable record of what the computer-use agent actually did, for the trace. */

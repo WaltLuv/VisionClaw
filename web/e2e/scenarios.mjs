@@ -385,7 +385,7 @@ export async function phoneWidths({browser, base, check, token}) {
  * real https page framed under the app's own policy. What matters: it is shown,
  * it is not reloaded by the app's constant re-rendering, taps and typing reach
  * the website only once the owner has control, and control is only ever
- * granted after the provider actually paused the employee.
+ * granted after the provider actually stopped the employee's run.
  */
 export async function liveBrowser({page, check, browserUse, cspViolations}) {
   await tab(page, 'Today').click();
@@ -417,8 +417,10 @@ export async function liveBrowser({page, check, browserUse, cspViolations}) {
 
   await page.locator('.live button:has-text("Take over")').click();
   await waitFor(async () => /You're in control/.test(await page.locator('.live-status').textContent()), 'control to change hands', 20000, 300);
-  check('taking over pauses the employee at the browser provider first', browserUse.calls.includes('pause'));
+  check('taking over stops the employee\'s current run at the browser provider first', browserUse.calls.includes('cancel:bu-e2e-1'));
   check('the screen says you are in control only after that', true);
+  const during = await state(page);
+  check('stopping the employee\'s run to hand you the browser does not end the task', during?.computer.some(c => c.status === 'working') && during?.run.some(r => r.status === 'working' || r.status === 'needs_user'));
 
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
   await waitFor(async () => await remote.locator('#presses').textContent() === '1', 'the tap to land', 5000, 200);
@@ -429,13 +431,15 @@ export async function liveBrowser({page, check, browserUse, cspViolations}) {
 
   await page.locator('.live button:has-text("Hand back")').click();
   await waitFor(async () => /Your employee is browsing/.test(await page.locator('.live-status').textContent()), 'control to return', 20000, 300);
-  check('handing back resumes the employee', browserUse.calls.includes('resume'));
+  check('handing back starts a follow-up run in the same browser session', browserUse.created.length === 2 && browserUse.created[1].sessionId === 'sess-e2e', `runs=${browserUse.created.length}`);
+  check('telling the employee to carry on from the page as you left it', /handed it back/.test(browserUse.created[1]?.task ?? ''));
+  check('the live view carried straight on, still never reloaded', browserUse.loads() === 1, `loads=${browserUse.loads()}`);
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
   check('and your taps stop reaching the website again', await remote.locator('#presses').textContent() === '1');
 
   await page.locator('.live button:has-text("Stop")').click();
   await waitFor(async () => (await page.locator('.live-status').textContent()) === 'Stopped.', 'the browser to stop', 20000, 300);
-  check('stopping cancels the browser at the provider', browserUse.calls.includes('cancel'));
+  check('stopping cancels the employee\'s follow-up run at the provider', browserUse.calls.includes('cancel:bu-e2e-2'));
   check('and lets go of the live view', (await frame.getAttribute('src')) === 'about:blank');
   const s = await state(page);
   check('the gateway keeps no live link once it ends', !s?.computer.some(c => c.liveUrl || c.liveEmbed));

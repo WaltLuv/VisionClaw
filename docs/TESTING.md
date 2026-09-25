@@ -6,7 +6,7 @@ credential this environment does not have, that is stated rather than implied.
 ## What runs without any credential
 
 ```bash
-cd gateway && npm ci && npx tsc --noEmit && npm test     # 118 tests
+cd gateway && npm ci && npx tsc --noEmit && npm test     # 122 tests
 cd web     && npm ci && npm run verify                   # build + 101 tests
 ```
 
@@ -28,7 +28,7 @@ python3 -m venv .hermes-venv
 ./.hermes-venv/bin/pip install hermes-agent==0.19.0
 export HERMES_CHECKOUT="$(./.hermes-venv/bin/python -c 'import sysconfig;print(sysconfig.get_paths()["purelib"])')"
 export HERMES_PYTHON="$PWD/.hermes-venv/bin/python"
-cd gateway && npm test                                   # 117 passed, 1 skipped (Claude Code, below)
+cd gateway && npm test                                   # 121 passed, 1 skipped (Claude Code, below)
 ```
 
 `HERMES_CHECKOUT` must be the directory containing `run_agent.py`; for a pip
@@ -137,12 +137,23 @@ To try the owner's real login once it is signed in, `bash deploy/doctor.sh
 
 ## Live browser and take-over
 
-`tests/browser.test.ts` (7 checks) against a stand-in Browser Use service, and
-18 end-to-end checks in a real browser (below). Established:
+`tests/browser.test.ts` (11 checks) against a stand-in Browser Use service,
+and end-to-end checks in a real browser (below). The stand-in behaves like
+Browser Use's v4 API as its official SDK defines it (below): runs are created,
+polled and cancelled, never paused; each belongs to a session; a follow-up run
+in the session reuses its live browser. Established:
 
-- taking over pauses the employee at the provider **before** the phone says
-  you are in control; a refused pause leaves the employee in control and says
-  so, and a refused resume leaves the browser with you;
+- taking over stops the employee's current run at the provider **before** the
+  phone says you are in control, and that stop is not mistaken for the end of
+  the task; handing back starts a follow-up run in the same session, told to
+  carry on from the page as it is, with the same guard rails as the first run;
+- a refused stop leaves the employee in control and says so, a refused
+  follow-up leaves the browser with you, and a browser with no Browser Use
+  session is never taken over, since it could not be handed back;
+- stopping while you hold the browser ends the job cleanly, and stopping a run
+  that had already finished is not left holding the only browser slot;
+- if a follow-up run is given a different browser, the phone switches to its
+  live view;
 - time with the owner does not count against the employee's 15 minutes, but a
   take-over left open is ended after 45;
 - the live link is dropped from the record when the job ends or is stopped;
@@ -157,14 +168,30 @@ To try the owner's real login once it is signed in, `bash deploy/doctor.sh
   control, taps and typing reach it; the page is loaded **once** however often
   the app re-renders; Stop cancels at the provider and lets go of the view.
 
-**Not verified against the live service**: Browser Use's documentation could
-not be reached from here. The v4 `pause` and `resume` paths follow the
-`cancel` path already in use (Browser Use documents pausing and resuming, but
-the exact v4 paths are unconfirmed), and serving the live view from
-`browser-use.com` or a subdomain is an assumption. If either is wrong, take-over fails safe (the
-employee keeps the browser and the phone says why) and the live view is named
-rather than shown. Whether a phone's keyboard opens inside Browser Use's viewer
-is up to that viewer.
+**Checked against Browser Use itself** (its documentation site is blocked from
+here, so through its official SDK, `browser-use-sdk` 3.11.3 on npm and PyPI,
+which is generated from its API definition, and its docs as quoted by search):
+
+- v4 is `https://api.browser-use.com/api/v4`, authenticated with
+  `X-Browser-Use-API-Key`; runs are `POST /runs`, `GET /runs/{id}`,
+  `/status`, `/events` and `POST /runs/{id}/cancel` -- all as the gateway
+  already used them.
+- **v4 has no pause or resume for a run.** The first version of take-over
+  called `/pause` and `/resume`; against the real service it would have
+  failed every time (safely: the employee kept the browser and the phone said
+  so). It now uses what v4 does have: a session "can reuse its live browser",
+  and a follow-up run with the session's id resumes work "in the same browser".
+- The live view is served from `live.browser-use.com`, is meant to be framed,
+  and Browser Use tells apps with a Content-Security-Policy to add it to
+  `frame-src` -- which is what the app does.
+
+**Still unconfirmed**: that the session's browser stays open between the
+employee's run being stopped and the follow-up. Browser Use's session design
+implies it (the browser belongs to the session, and interrupting a run is
+built to continue in the same browser), but no document says it outright. If
+it does not, the owner's view would lose its connection, and hand-back would
+continue in a fresh browser. Whether a phone's keyboard opens inside Browser
+Use's viewer is up to that viewer.
 
 ## End-to-end
 
@@ -187,7 +214,7 @@ sign-out.
 
 ```bash
 cd web && npm run build
-cd web && npm run e2e                                    # 108 checks
+cd web && npm run e2e                                    # 111 checks
 ```
 
 Needs `HERMES_CHECKOUT` and `HERMES_PYTHON` as above; it exits 2 with
@@ -205,10 +232,10 @@ as a pass.
 | Suite | Command | Result |
 |---|---|---|
 | Gateway typecheck | `npx tsc --noEmit` | clean |
-| Gateway tests | `npm test` | 117 passed, 0 failed, 1 skipped (14 files); the skip is the real Claude Code test, for the reason above |
+| Gateway tests | `npm test` | 121 passed, 0 failed, 1 skipped (14 files); the skip is the real Claude Code test, for the reason above |
 | Web typecheck + build | `npm run build` | clean; entry 38.5 kB, 12.9 kB gzipped |
 | Web tests | `npm test` | 101 passed (9 files) |
-| End-to-end | `npm run e2e` | 108 passed |
+| End-to-end | `npm run e2e` | 111 passed |
 
 `npm run lint` in `gateway/` (prettier --check) fails on 36 files. It already
 failed on 20 at the `a62fb16` checkpoint, before any of this work: the

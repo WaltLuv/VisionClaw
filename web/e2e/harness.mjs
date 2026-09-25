@@ -31,8 +31,10 @@ function startSupplierFixture() {
 }
 
 /**
- * Browser Use, stood in for. The API side records every pause, resume and
- * cancel. The live view side is a small "website" served over https from
+ * Browser Use, stood in for, shaped like its v4 API as the official SDK defines
+ * it: runs are created, polled and cancelled, never paused; each belongs to a
+ * session, and a follow-up run in that session reuses its live browser. The
+ * API side records every run it is asked to start and every cancel. The live view side is a small "website" served over https from
  * live.visionclaw.test -- an allowed live-view host -- so the app frames it
  * under exactly the policy it ships with. The page counts its own loads, so a
  * re-render that reloaded the view would show up as a second load.
@@ -47,30 +49,40 @@ function startBrowserUseFixture(dataDir) {
   // A certificate made for this run only, so no private key -- test or not -- is ever committed.
   const key = path.join(dataDir, 'live-key.pem'), cert = path.join(dataDir, 'live-cert.pem');
   execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', key, '-out', cert, '-days', '1', '-subj', `/CN=${LIVE_HOST}`], {stdio: 'ignore'});
-  const calls = [];
-  let status = 'running', loads = 0;
+  const calls = [], created = [], status = {};
+  let loads = 0;
   const live = createHttpsServer({key: readFileSync(key), cert: readFileSync(cert)}, (req, res) => {
     if (!req.url?.startsWith('/view')) {res.statusCode = 404; res.end(); return;}
     loads++;
     res.setHeader('Content-Type', 'text/html');
     res.end(LIVE_PAGE);
   });
-  const api = createServer((req, res) => {
-    req.resume();
+  const api = createServer(async (req, res) => {
+    let raw = '';
+    for await (const chunk of req) raw += chunk;
     const json = (code, value) => {res.statusCode = code; res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(value));};
-    if (req.method === 'POST' && req.url === '/api/v4/runs') {status = 'running'; json(200, {id: 'bu-e2e'}); return;}
-    const m = req.url?.match(/^\/api\/v4\/runs\/[^/]+(?:\/(\w+))?$/);
-    if (!m) {json(404, {}); return;}
-    const action = m[1];
-    if (req.method === 'POST') {calls.push(action); if (action === 'cancel') status = 'cancelled'; json(200, {}); return;}
-    if (action === 'events') {json(200, {events: [{type: 'browser.ready', data: {live_view_url: `https://${LIVE_HOST}/view?session=e2e`}}]}); return;}
-    if (action === 'status') {json(200, {status}); return;}
-    json(200, {status, result: status === 'completed' ? 'The spec sheet lists M6 x 20 mm.' : null});
+    if (req.method === 'POST' && req.url === '/api/v4/runs') {
+      const body = JSON.parse(raw || '{}'), id = `bu-e2e-${created.length + 1}`;
+      created.push(body); status[id] = 'running';
+      json(200, {id, status: 'queued', sessionId: body.sessionId ?? 'sess-e2e', workspaceId: 'ws-e2e', eventsUrl: `/runs/${id}/events`});
+      return;
+    }
+    const m = req.url?.match(/^\/api\/v4\/runs\/([^/]+)(?:\/(\w+))?$/);
+    if (!m) {json(404, {detail: 'Not Found'}); return;}
+    const [, id, action] = m;
+    if (req.method === 'POST') {
+      if (action !== 'cancel') {json(404, {detail: 'Not Found'}); return;}   // v4 has no pause or resume
+      calls.push(`cancel:${id}`); status[id] = 'cancelled'; json(200, {id, status: 'cancelled'}); return;
+    }
+    // Every run in the session is on the same live browser.
+    if (action === 'events') {json(200, {events: [{type: 'browser.ready', data: {live_view_url: `https://${LIVE_HOST}/view?session=e2e`}}], hasMore: false}); return;}
+    if (action === 'status') {json(200, {status: status[id]}); return;}
+    json(200, {id, status: status[id], result: status[id] === 'completed' ? 'The spec sheet lists M6 x 20 mm.' : null});
   });
   live.listen(0, '127.0.0.1');
   api.listen(0, '127.0.0.1');
   return Promise.all([live, api].map(server => new Promise(r => server.on('listening', r)))).then(() => ({
-    live, api, calls, livePort: live.address().port, apiPort: api.address().port, loads: () => loads,
+    live, api, calls, created, livePort: live.address().port, apiPort: api.address().port, loads: () => loads,
   }));
 }
 

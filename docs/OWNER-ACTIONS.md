@@ -95,7 +95,9 @@ cannot work.
   response. Nothing is hardcoded to a particular vendor.
 - **Browser use**: `BROWSER_USE_API_KEY`. While the employee browses, Today
   shows **Watch it browse**: a full-screen live view you can **Take over** (the
-  employee is paused at Browser Use first) and **Hand back**. The phone only
+  employee's current run is stopped at Browser Use first; the browser stays
+  open for you) and **Hand back** (the employee carries on in the same browser,
+  from the page as you left it). The phone only
   frames live views from Browser Use's own https hosts; a live view served from
   anywhere else is named on screen instead, and can be allowed with
   `BROWSER_LIVE_VIEW_HOSTS` (host names, comma-separated).

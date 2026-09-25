@@ -33,6 +33,7 @@ describe('live browser screen', () => {
     expect(visible('.live')).toBe(true);
     expect(q<HTMLIFrameElement>('.live-frame').src).toBe(LIVE);
     expect(q<HTMLIFrameElement>('.live-frame').getAttribute('referrerpolicy')).toBe('no-referrer');
+    expect(q<HTMLIFrameElement>('.live-frame').getAttribute('allow')).toBe('autoplay');
     expect(visible('.live-shield')).toBe(true);
     expect(button('Take over').hidden).toBe(false);
     expect(button('Hand back').hidden).toBe(true);
