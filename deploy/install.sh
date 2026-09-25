@@ -32,6 +32,7 @@ bad()  { printf '\n\033[31m%s\033[0m\n' "$*" >&2; }
 
 say "Checking this machine"
 
+command -v curl >/dev/null || { bad "curl is not installed. Install it (sudo apt install -y curl), then run this again."; exit 1; }
 command -v node >/dev/null || { bad "Node is not installed. Install Node 22 or newer, then run this again."; exit 1; }
 NODE_MAJOR="$(node -p 'process.versions.node.split(".")[0]')"
 [ "$NODE_MAJOR" -ge 22 ] || { bad "Node $NODE_MAJOR is too old. Install Node 22 or newer, then run this again."; exit 1; }
@@ -90,12 +91,15 @@ ask() { # ask VAR "Question" [default]
   printf '  %s' "$prompt" >&2
   [ -n "$existing" ] && printf ' [%s]' "$existing" >&2
   printf ': ' >&2
-  read -r answer < /dev/tty || answer=""
+  # With no terminal (a script or an agent running this), unanswered questions stay blank.
+  read -r answer 2>/dev/null < /dev/tty || answer=""
   echo "${answer:-$existing}"
 }
 
 say "A few things only you know"
-DOMAIN="$(ask PUBLIC_DOMAIN 'The web address you will open on your phone (e.g. agent.yourcompany.com)')"
+# Saved as PUBLIC_BASE_URL, so a second run reads it back from there.
+DOMAIN="$(grep -E '^PUBLIC_BASE_URL=https://' "$ENV_FILE" 2>/dev/null | head -1 | cut -d/ -f3 || true)"
+[ -n "$DOMAIN" ] || DOMAIN="$(ask PUBLIC_DOMAIN 'The web address you will open on your phone (e.g. agent.yourcompany.com)')"
 [ -n "$DOMAIN" ] || { bad "A web address is required: phones only allow the camera and microphone over https."; exit 1; }
 GEMINI_KEY="$(ask GOOGLE_API_KEY 'Your Google Gemini API key (for seeing and talking)')"
 # Claude Code, for owners who want to use their own Claude subscription. It
@@ -166,6 +170,17 @@ ACCESS_CODE="$(keep GATEWAY_TOKENS)"; ACCESS_CODE="${ACCESS_CODE%%:*}"
 STATE_SECRET="$(keep STATE_SECRET)"; [ -n "$STATE_SECRET" ] || STATE_SECRET="$(openssl rand -hex 32)"
 SERVICE_TOKEN="$(keep GATEWAY_SERVICE_TOKEN)"; [ -n "$SERVICE_TOKEN" ] || SERVICE_TOKEN="$(openssl rand -hex 32)"
 
+# Anything added by hand -- a model provider for Hermes, text messages,
+# suppliers -- is kept as it was. Only the settings below are rewritten.
+MANAGED=" GATEWAY_TOKENS PUBLIC_BASE_URL PORT NODE_ENV REGISTRATION_OPEN STATE_SECRET GATEWAY_SERVICE_TOKEN STORE_PATH EMPLOYEE_DATA_DIR AGENT_RUNTIME ANTHROPIC_API_KEY HERMES_CHECKOUT HERMES_PYTHON CLAUDE_CODE_BIN CLAUDE_CODE_OWNER GOOGLE_API_KEY GEMINI_API_KEY LIVEKIT_URL LIVEKIT_API_KEY LIVEKIT_API_SECRET BROWSERBASE_API_KEY GATEWAY_URL "
+EXTRA=""
+if [ -f "$ENV_FILE" ]; then
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in [A-Za-z_]*=*) ;; *) continue ;; esac
+    case "$MANAGED" in *" ${line%%=*} "*) ;; *) EXTRA="$EXTRA$line"$'\n' ;; esac
+  done < "$ENV_FILE"
+fi
+
 umask 077
 cat > "$ENV_FILE" <<ENVEOF
 # Written by deploy/install.sh. Keep this file private: it holds your keys.
@@ -214,14 +229,33 @@ BROWSERBASE_API_KEY=$BB_KEY
 # How the voice worker calls back in.
 GATEWAY_URL=http://127.0.0.1:8788
 ENVEOF
+if [ -n "$EXTRA" ]; then printf '\n# Your other settings, kept as they were.\n%s' "$EXTRA" >> "$ENV_FILE"; fi
 chmod 600 "$ENV_FILE"
+# Private to the person the services run as, so doctor.sh works without sudo.
+chown "$SERVICE_USER" "$ENV_FILE" 2>/dev/null || true
+# Only the settings file is private. What is built next has to be readable by
+# the services, which do not run as root.
+umask 022
 info "Saved to $ENV_FILE"
 
 # --- build ----------------------------------------------------------------
 
 say "Building the app"
-(cd "$ROOT/gateway" && npm ci --omit=optional --no-audit --no-fund >/dev/null 2>&1 && info "gateway ready")
-(cd "$ROOT/web" && npm ci --no-audit --no-fund >/dev/null 2>&1 && npm run build >/dev/null 2>&1 && info "phone app built")
+# Development packages are needed to run: the gateway starts through tsx and
+# the phone app is built with vite. Optional ones too: sharp, which checks
+# every photo, ships its Linux binary as one, and without it nothing starts.
+LOG="$(mktemp)"
+if ! (cd "$ROOT/gateway" && npm ci --include=dev --include=optional --no-audit --no-fund) >"$LOG" 2>&1; then
+  bad "Installing the gateway failed:"; tail -n 20 "$LOG" >&2; exit 1
+fi
+info "gateway ready"
+if ! (cd "$ROOT/web" && npm ci --include=dev --no-audit --no-fund && npm run build) >"$LOG" 2>&1; then
+  bad "Building the phone app failed:"; tail -n 20 "$LOG" >&2; exit 1
+fi
+info "phone app built"
+rm -f "$LOG"
+# An earlier run may have left these readable by root alone.
+chmod -R a+rX "$ROOT/gateway/node_modules" "$ROOT/web/dist" 2>/dev/null || true
 
 if [ -n "$LK_URL" ]; then
   say "Setting up the voice worker"
@@ -238,6 +272,8 @@ fi
 
 mkdir -p "$ROOT/data"
 chown -R "$SERVICE_USER" "$ROOT/data" 2>/dev/null || true
+# Tasks, memory and evidence: for the service alone.
+chmod 700 "$ROOT/data"
 
 # --- run it on boot -------------------------------------------------------
 
@@ -266,27 +302,54 @@ UNITEOF
 
 unit fieldagent "Field agent gateway" "$ROOT/gateway" "$(command -v npm) start"
 systemctl daemon-reload
-systemctl enable --now fieldagent >/dev/null 2>&1
-info "gateway running"
+# Restart, not just start: on a second run the new code and settings have to load.
+systemctl enable fieldagent >/dev/null 2>&1
+systemctl restart fieldagent
+# Started is not the same as working: wait until it answers.
+for _ in $(seq 1 45); do
+  curl -fsS --max-time 2 --noproxy '*' http://127.0.0.1:8788/health >/dev/null 2>&1 && break
+  sleep 1
+done
+if curl -fsS --max-time 2 --noproxy '*' http://127.0.0.1:8788/health >/dev/null 2>&1; then info "gateway running"
+else bad "The gateway did not start. See why with: sudo journalctl -u fieldagent -n 40"; exit 1; fi
 
 if [ -n "$LK_URL" ]; then
   unit fieldagent-voice "Field agent voice worker" "$ROOT/agent" "$ROOT/agent/.venv/bin/python main.py start"
   systemctl daemon-reload
-  systemctl enable --now fieldagent-voice >/dev/null 2>&1
+  systemctl enable fieldagent-voice >/dev/null 2>&1
+  systemctl restart fieldagent-voice
   info "voice worker running"
 fi
 
 # --- https ----------------------------------------------------------------
 
+CADDYFILE=/etc/caddy/Caddyfile
 if command -v caddy >/dev/null; then
   say "Turning on https"
-  cat > /etc/caddy/Caddyfile <<CADDYEOF
-$DOMAIN {
+  SITE="$DOMAIN {
   reverse_proxy 127.0.0.1:8788
-}
-CADDYEOF
-  systemctl reload caddy 2>/dev/null || systemctl restart caddy 2>/dev/null || true
-  info "https on for $DOMAIN"
+}"
+  if grep -qF "$DOMAIN {" "$CADDYFILE" 2>/dev/null; then
+    info "https was already set up for $DOMAIN"
+  else
+    # Other sites this server already serves are kept: the stock example file
+    # is replaced, anything else gets this site added. The old file is kept
+    # beside it, and put back if Caddy will not accept the result.
+    OTHER="$(grep -vE '^[[:space:]]*(#|$)' "$CADDYFILE" 2>/dev/null | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | grep -vxE ':80 \{|root \* /usr/share/caddy|file_server|\}' || true)"
+    mkdir -p "$(dirname "$CADDYFILE")"
+    BACKED_UP=false
+    if [ -f "$CADDYFILE" ]; then cp -p "$CADDYFILE" "$CADDYFILE.before-visionclaw"; BACKED_UP=true; fi
+    if [ -n "$OTHER" ]; then printf '\n%s\n' "$SITE" >> "$CADDYFILE"; else printf '%s\n' "$SITE" > "$CADDYFILE"; fi
+    if caddy validate --config "$CADDYFILE" --adapter caddyfile >/dev/null 2>&1; then
+      systemctl reload caddy 2>/dev/null || systemctl restart caddy 2>/dev/null || true
+      info "https on for $DOMAIN"
+    else
+      if [ "$BACKED_UP" = true ]; then cp -p "$CADDYFILE.before-visionclaw" "$CADDYFILE"; else rm -f "$CADDYFILE"; fi
+      bad "Caddy would not accept its settings with this site added, so they were left as they were."
+      info "Add this to $CADDYFILE yourself, then: sudo systemctl reload caddy"
+      printf '%s\n' "$SITE"
+    fi
+  fi
 else
   say "One thing left: https"
   info "Phones only allow the camera and microphone over https."

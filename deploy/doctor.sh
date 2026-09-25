@@ -16,7 +16,15 @@ meh()  { printf '  \033[33m–\033[0m %s\n' "$*"; }
 head_() { printf '\n\033[1m%s\033[0m\n' "$*"; }
 
 [ -f "$ENV_FILE" ] || { printf '\nNo settings yet. Run: sudo bash deploy/install.sh\n\n'; exit 1; }
-set -a; . "$ENV_FILE"; set +a
+# Read it the way systemd reads it for the services: literally, one KEY=value
+# per line. Running it as shell would expand any "$" in a key or password.
+while IFS= read -r line || [ -n "$line" ]; do
+  case "$line" in [A-Za-z_]*=*) ;; *) continue ;; esac
+  key="${line%%=*}"; val="${line#*=}"
+  case "$key" in *[!A-Za-z0-9_]*) continue ;; esac
+  case "$val" in \"*\") val="${val#\"}"; val="${val%\"}" ;; \'*\') val="${val#\'}"; val="${val%\'}" ;; esac
+  export "$key=$val"
+done < "$ENV_FILE"
 
 head_ "Your agent"
 if systemctl is-active --quiet fieldagent 2>/dev/null; then ok "running"
@@ -46,6 +54,9 @@ if [ "${AGENT_RUNTIME:-anthropic}" = "hermes" ]; then
     ok "set to Hermes, found at $HERMES_CHECKOUT"
     if "${HERMES_PYTHON:-python3}" -c "import sys; sys.path.insert(0,'$HERMES_CHECKOUT'); import run_agent" 2>/dev/null; then ok "it loads"
     else no "it will not load with ${HERMES_PYTHON:-python3} — set HERMES_PYTHON to the right interpreter"; fi
+    # Hermes gets its own home per owner here, so its settings elsewhere on this machine do not apply.
+    if [ -n "${HERMES_PROVIDER:-}" ]; then ok "model provider: $HERMES_PROVIDER${HERMES_MODEL:+, model $HERMES_MODEL}"
+    else meh "no model provider named — set HERMES_PROVIDER and HERMES_MODEL in .env, or Hermes picks one from the keys it is given"; fi
   else
     no "set to Hermes, but it is not on this machine — set HERMES_CHECKOUT to the folder holding run_agent.py"
   fi
