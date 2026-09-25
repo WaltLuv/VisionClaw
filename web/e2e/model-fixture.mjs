@@ -5,7 +5,16 @@ import {createServer} from 'node:http';
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-const reply = (task, alreadyCalledTool) => {
+const call = (name, args) => ({role: 'assistant', content: null, tool_calls: [{index: 0, id: `call-${name}`, type: 'function', function: {name, arguments: JSON.stringify(args)}}]});
+
+const reply = (task, alreadyCalledTool, toolResults = 0) => {
+  // Browsing it does itself, in a browser it opens: one step per turn.
+  if (/\bsurf\b/i.test(task)) {
+    if (toolResults === 0) return call('browser_open', {purpose: 'Check the hardware shop for the Moen 1222 cartridge'});
+    if (toolResults === 1) return call('browser_goto', {url: process.env.E2E_SHOP_URL});
+    if (toolResults === 2) return call('browser_read', {});
+    return {role: 'assistant', content: 'The hardware shop has the Moen 1222 cartridge: 3 in stock.'};
+  }
   if (alreadyCalledTool && /\blook up\b|\bversion\b|\bweather\b|\bjacket\b/i.test(task)) {
     return {role: 'assistant', content: 'I read the package registry. The latest published version is listed there under dist-tags.'};
   }
@@ -47,7 +56,10 @@ export function startModelFixture() {
     // A task the caller asked to take a while, so cancellation and surviving a
     // disconnect have something in flight to act on.
     if (/\bslowly\b/i.test(task)) await sleep(Number(process.env.E2E_SLOW_MS ?? 8000));
-    const message = reply(task, messages.some(m => m.role === 'tool'));
+    const toolResults = messages.filter(m => m.role === 'tool').length;
+    // Once its browser is open, it pauses a moment before the next step, so the owner can take over first.
+    if (/\bsurf\b/i.test(task) && toolResults === 1) await sleep(Number(process.env.E2E_SURF_PAUSE_MS ?? 5000));
+    const message = reply(task, toolResults > 0, toolResults);
     const finish = message.tool_calls ? 'tool_calls' : 'stop';
     if (input.stream) {
       res.setHeader('Content-Type', 'text/event-stream');

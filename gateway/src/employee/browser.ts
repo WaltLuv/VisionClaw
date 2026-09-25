@@ -5,7 +5,7 @@ import {z} from 'zod';import {Store,type Row} from './db.js';import {ToolGateway
 // The live view is framed inside the owner's signed-in app, so only a browser
 // provider's own https pages qualify. Each allowed host includes its subdomains.
 const LIVE_HOST=/^(?=.{1,253}$)([a-z0-9-]+\.)+[a-z]{2,63}$/;
-export const liveViewHosts=()=>['browser-use.com',...(process.env.BROWSER_LIVE_VIEW_HOSTS??'').split(',').map(h=>h.trim().toLowerCase()).filter(Boolean)];
+export const liveViewHosts=()=>['browser-use.com','browserbase.com',...(process.env.BROWSER_LIVE_VIEW_HOSTS??'').split(',').map(h=>h.trim().toLowerCase()).filter(Boolean)];
 export function validLiveViewHosts(){return liveViewHosts().every(h=>LIVE_HOST.test(h));}
 export function embeddableLiveUrl(url:unknown):string|null{try{const u=new URL(String(url));if(u.protocol!=='https:'||u.username||u.password)return null;const host=u.hostname.toLowerCase();return liveViewHosts().some(h=>host===h||host.endsWith('.'+h))?u.toString():null;}catch{return null;}}
 /** The CSP frame-src for the app: exactly the hosts a live view may come from. */
@@ -24,11 +24,19 @@ export function browserClock(r:Row,begun:number,now=Date.now()):string|null{cons
 
 async function providerPost(path:string){const r=await fetch(`${browserUseBase()}${path}`,{method:'POST',redirect:'error',signal:AbortSignal.timeout(15_000),headers:{'X-Browser-Use-API-Key':process.env.BROWSER_USE_API_KEY??''}});if(!r.ok)throw Error(`Browser service returned HTTP ${r.status}`);}
 
+/** Wait for a free browser slot. Every provider shares COMPUTER_CAPACITY, first come first served. */
+export async function waitForBrowserSlot(db:Store,ticket:Row,assertAuthorized:()=>void,deadline=Date.now()+RUN_BUDGET){
+ while(db.all('computer').filter(x=>['starting','working','cleanup_pending'].includes(x.data.status)).length>=Number(process.env.COMPUTER_CAPACITY??1)||db.all('computer').some(x=>x.data.status==='queued'&&x.data.createdAt<ticket.createdAt)){assertAuthorized();if(Date.now()>deadline)throw Error('Browser queue wait expired');await new Promise(r=>setTimeout(r,750));}
+}
+/** A browser provider the employee drives itself; ending one of its sessions is provider business. */
+export interface DrivenBrowsers{release(owner:string,computerId:string,status:'closed'|'cancelled'):Promise<void>}
+
 export class BrowserCapability{
- constructor(readonly db:Store){}
+ constructor(readonly db:Store,readonly driven?:DrivenBrowsers){}
  /** The live link is a key to someone's browser; once the job is over nobody should hold it. */
  private end(owner:string,id:string,status:string){const {liveUrl:_u,liveEmbed:_e,...rest}=this.db.get(owner,'computer',id)!;this.db.put(owner,'computer',{...rest,status});}
  async cancel(owner:string,id:string){const r=this.db.get(owner,'computer',id);if(!r||closed.includes(r.status))return;
+  if(r.provider==='browserbase'){if(this.driven)await this.driven.release(owner,id,'cancelled');else this.end(owner,id,'cancelled');return;}
   if(!r.providerId){this.end(owner,id,'cancelled');return;}
   // While the owner holds the browser the employee's run is already cancelled; nothing of theirs is left to stop.
   if(r.control==='owner'){this.end(owner,id,'cancelled');return;}
@@ -55,6 +63,11 @@ export class BrowserCapability{
   const r=this.db.get(owner,'computer',id);if(!r)return undefined;
   if(r.status!=='working'||!r.providerId)throw Error('That browser is not running.');
   if((r.control??'agent')===to)return r;
+  // A browser the employee drives itself needs no provider call: its next step waits while the owner has it.
+  if(r.provider==='browserbase'){
+   const now=Date.now(),next:Row=to==='owner'?{...r,control:'owner',controlSince:now}:{...r,control:'agent',pausedMs:withOwner(r,now),controlSince:undefined};
+   this.db.put(owner,'computer',next);this.db.event(owner,'computer.updated',{runId:r.runId,computerId:id,control:to});return next;
+  }
   if(to==='owner'){
    if(!r.providerSession)throw Error("This browser can't be handed over, so your employee is still driving. You can stop it.");
    // Marked before the cancel is sent: the job's own loop must not read the cancel it is about to see as the end of the job.
@@ -75,7 +88,7 @@ export class BrowserCapability{
   if(!process.env.BROWSER_USE_API_KEY)throw Error('Web browsing is not connected');
   const ticket=this.db.create(c.owner,'computer',{runId:c.runId,status:'queued',task});const queueDeadline=Date.now()+RUN_BUDGET;
   try{
-   while(this.db.all('computer').filter(x=>['starting','working','cleanup_pending'].includes(x.data.status)).length>=Number(process.env.COMPUTER_CAPACITY??1)||this.db.all('computer').some(x=>x.data.status==='queued'&&x.data.createdAt<ticket.createdAt)){c.assertAuthorized();if(Date.now()>queueDeadline)throw Error('Browser queue wait expired');await new Promise(r=>setTimeout(r,750));}
+   await waitForBrowserSlot(this.db,ticket,c.assertAuthorized,queueDeadline);
    c.assertAuthorized();this.db.put(c.owner,'computer',{...ticket,status:'starting'});
    const started=await startBrowse(task+GUARD,(providerId,providerSession)=>{this.db.put(c.owner,'computer',{...ticket,providerId,providerSession,status:'working',control:'agent'});});
    c.assertAuthorized();const record=this.db.get(c.owner,'computer',ticket.id)!;
@@ -110,5 +123,5 @@ export class BrowserCapability{
   this.db.put(owner,'computer',{...latest,liveUrl:url,liveEmbed:embeddableLiveUrl(url),liveHost:host,liveFrom:runId});this.db.event(owner,'computer.updated',{runId:latest.runId,computerId:latest.id});
  }
  register(t:ToolGateway){t.register({id:'browser_work',description:'Use a fresh browser for this specific web task',effect:'computer',schema:z.object({task:z.string().min(1).max(8000)}),run:async(a,c)=>this.execute(a.task,c)});}
- async cleanup(){for(const {owner,data:r} of this.db.all('computer'))if(!closed.includes(r.status)&&terminal.has(this.db.get(owner,'run',r.runId)?.status))await this.cancel(owner,r.id);}
+ async cleanup(){for(const {owner,data:r} of this.db.all('computer'))if(!closed.includes(r.status)&&terminal.has(this.db.get(owner,'run',r.runId)?.status)){if(r.provider==='browserbase'&&this.driven)await this.driven.release(owner,r.id,'closed');else await this.cancel(owner,r.id);}}
 }

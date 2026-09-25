@@ -448,3 +448,40 @@ export async function liveBrowser({page, check, browserUse, cspViolations}) {
   check('Back returns to the app', !(await live.isVisible()));
   check('and the Watch card is gone', await page.locator('button:has-text("Watch it browse")').count() === 0);
 }
+
+/**
+ * A browser the employee drives itself (Browserbase), step by step, through
+ * the real Hermes runtime. Taking it over needs no provider at all: the app
+ * holds the employee's next step until the browser is handed back -- so the
+ * pause is proven here by the employee visibly not reaching the shop.
+ */
+export async function drivenBrowser({page, check, browserbase}) {
+  await tab(page, 'Today').click();
+  await page.locator('textarea[aria-label="Ask or assign something"]').fill('Surf to the hardware shop and check the part');
+  await page.locator('button:has-text("Send")').click();
+
+  await waitFor(async () => (await state(page))?.approval.some(a => a.status === 'pending' && a.tool === 'browser_open'), 'the browser request', 150000, 1500);
+  check('opening a browser the employee drives asks first', true);
+  await page.locator('button:has-text("Allow once")').first().click();
+
+  await waitFor(async () => await page.locator('button:has-text("Watch it browse")').count() > 0, 'the Watch card', 60000, 400);
+  await page.locator('button:has-text("Watch it browse")').click();
+  await page.locator('.live button:has-text("Take over")').click();
+  await waitFor(async () => /You're in control/.test(await page.locator('.live-status').textContent()), 'control to change hands', 10000, 200);
+  check('taking over a browser the employee drives is immediate', true);
+
+  await new Promise(r => setTimeout(r, Number(process.env.E2E_SURF_PAUSE_MS ?? 5000) + 2500));
+  check('while you drive, the employee does not touch the browser', browserbase.shopVisits() === 0, `visits=${browserbase.shopVisits()}`);
+  const holding = await state(page);
+  check('and its task waits for you rather than failing', holding?.run.some(r => /Surf/.test(r.task) && ['working', 'needs_user'].includes(r.status)));
+
+  await page.locator('.live button:has-text("Hand back")').click();
+  await waitFor(async () => (await state(page))?.run.find(r => /Surf/.test(r.task))?.status === 'completed', 'the task to finish', 90000, 750);
+  check('handing back lets it carry on and finish', browserbase.shopVisits() >= 1, `visits=${browserbase.shopVisits()}`);
+  const done = await state(page);
+  check('every step it took is on the record', ['browser_open', 'browser_goto', 'browser_read'].every(n => done?.action.some(a => a.name === n && a.status === 'completed')));
+  check('and the answer came from the page it read', done?.run.find(r => /Surf/.test(r.task))?.result?.includes('3 in stock'));
+  await waitFor(async () => browserbase.released.length > 0, 'the browser to be released', 15000, 300);
+  check('the browser is released as soon as the task is done', true);
+  if (await page.locator('.live').isVisible()) await page.locator('.live').getByRole('button', {name: '← Back', exact: true}).click();
+}

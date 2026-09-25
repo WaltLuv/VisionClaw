@@ -22,6 +22,8 @@ let current: Ctx | null = null;
 let busy = false;
 let shownSrc = '';
 let lastControl: Computer['control'];
+// Browserbase's live view posts this when it loses the browser; a frozen picture should not pass for a live one.
+let disconnected = false;
 let view: ReturnType<typeof build> | null = null;
 
 function build() {
@@ -41,6 +43,9 @@ function build() {
     h('div', {class: 'live-stage'}, frame, shield, message),
     h('footer', {class: 'live-foot'}, h('div', {class: 'row wrap'}, take, give, stop), note));
   document.addEventListener('keydown', e => {if (e.key === 'Escape' && watching) closeLive();});
+  window.addEventListener('message', e => {
+    if (e.source === frame.contentWindow && e.data === 'browserbase-disconnected') {disconnected = true; if (current) updateLive(current);}
+  });
   document.body.append(root);
   return {root, frame, shield, message, status, back, take, give, stop, note};
 }
@@ -65,6 +70,7 @@ export function closeLive() {
 function show(src: string) {
   if (!view || src === shownSrc) return;
   shownSrc = src;
+  disconnected = false;
   view.frame.src = src || 'about:blank';
 }
 
@@ -114,6 +120,7 @@ export function updateLive(ctx: Ctx) {
   else if (!running) {status = ENDED[c.status] ?? 'This browser session has ended.';}
   else if (!working) {status = c.status === 'cleanup_pending' ? 'Stopping…' : 'Starting a browser…';}
   else if (yours) {status = "You're in control. Your employee is paused until you hand it back."; note = "Anything you type goes to that website. Hand back when you're done.";}
+  else if (src && disconnected) {status = 'The live view lost its connection to the browser.'; note = 'The browser may have closed. Stop ends the whole task.';}
   else if (src) {status = 'Your employee is browsing. Tap Take over to use it yourself.'; note = 'Stop ends the whole task.';}
   else if (c.liveHost) {status = 'Your employee is browsing.'; message = `Its live view comes from ${c.liveHost}, which this app is not set up to show.`; note = 'Whoever runs your server can allow it with BROWSER_LIVE_VIEW_HOSTS.';}
   else {status = 'Your employee is browsing.'; message = 'Waiting for the live view…';}

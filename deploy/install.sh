@@ -154,6 +154,7 @@ info "Work goes to: $RUNTIME"
 LK_URL="$(ask LIVEKIT_URL 'LiveKit URL (leave blank to set up voice later)')"
 LK_KEY="$(ask LIVEKIT_API_KEY 'LiveKit API key (blank to skip)')"
 LK_SECRET="$(ask LIVEKIT_API_SECRET 'LiveKit API secret (blank to skip)')"
+BB_KEY="$(ask BROWSERBASE_API_KEY 'Browserbase API key, so your employee can use a web browser you can watch and take over (blank to skip)')"
 
 # --- write the settings ---------------------------------------------------
 
@@ -206,6 +207,9 @@ GEMINI_API_KEY=$GEMINI_KEY
 LIVEKIT_URL=$LK_URL
 LIVEKIT_API_KEY=$LK_KEY
 LIVEKIT_API_SECRET=$LK_SECRET
+
+# A web browser your employee can use, and you can watch and take over.
+BROWSERBASE_API_KEY=$BB_KEY
 
 # How the voice worker calls back in.
 GATEWAY_URL=http://127.0.0.1:8788

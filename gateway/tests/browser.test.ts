@@ -163,7 +163,7 @@ test('only a browser provider\'s own https pages are offered for embedding',asyn
  assert.equal(embeddableLiveUrl('javascript:alert(1)'),null);
  process.env.BROWSER_LIVE_VIEW_HOSTS='live.example.com';
  assert.equal(embeddableLiveUrl('https://live.example.com/v'),'https://live.example.com/v','an owner can allow another provider');
- assert.equal(liveFrameSources(),'https://browser-use.com https://*.browser-use.com https://live.example.com https://*.live.example.com');
+ assert.equal(liveFrameSources(),'https://browser-use.com https://*.browser-use.com https://browserbase.com https://*.browserbase.com https://live.example.com https://*.live.example.com');
  for(const bad of ['*',"'unsafe-inline'",'https://x.com','a b','localhost']){process.env.BROWSER_LIVE_VIEW_HOSTS=bad;assert.equal(validLiveViewHosts(),false,`${bad} must not reach the Content-Security-Policy`);}
 });
 
@@ -218,7 +218,7 @@ test('HTTP: take-over needs your session and CSRF token, and is invisible to ano
 test('the phone app may frame a live view host and nothing else, and still runs no inline script',async()=>{
  const {appContentSecurityPolicy}=await import('../src/csp.js');
  const csp=appContentSecurityPolicy();
- assert.match(csp,/frame-src https:\/\/browser-use\.com https:\/\/\*\.browser-use\.com;/);
+ assert.match(csp,/frame-src https:\/\/browser-use\.com https:\/\/\*\.browser-use\.com https:\/\/browserbase\.com https:\/\/\*\.browserbase\.com;/);
  assert.doesNotMatch(csp,/frame-src[^;]*https:;/,'no longer any https page at all');
  assert.match(csp,/script-src 'self';/);
  assert.match(csp,/frame-ancestors 'none'/,'and nobody may frame the app itself');

@@ -100,6 +100,18 @@ else
   meh "not set up yet — typing and photos still work without it"
 fi
 
+head_ "Using a browser"
+# Read-only calls: listing costs nothing, and a refused key is caught here rather than mid-task.
+if [ -n "${BROWSERBASE_API_KEY:-}" ]; then
+  if curl -fsS --max-time 10 -o /dev/null -H "X-BB-API-Key: $BROWSERBASE_API_KEY" "${BROWSERBASE_API_BASE:-https://api.browserbase.com}/v1/sessions?status=RUNNING"; then ok "Browserbase: the key works"
+  else no "Browserbase refused the key, or cannot be reached from this machine"; fi
+fi
+if [ -n "${BROWSER_USE_API_KEY:-}" ]; then
+  if curl -fsS --max-time 10 -o /dev/null -H "X-Browser-Use-API-Key: $BROWSER_USE_API_KEY" "${BROWSER_USE_API_BASE:-https://api.browser-use.com/api/v4}/runs?limit=1"; then ok "Browser Use: the key works"
+  else no "Browser Use refused the key, or cannot be reached from this machine"; fi
+fi
+[ -z "${BROWSERBASE_API_KEY:-}${BROWSER_USE_API_KEY:-}" ] && meh "not set up — your employee can still read public web pages"
+
 head_ "Who can get in"
 if [ "${REGISTRATION_OPEN:-true}" = "false" ]; then ok "only you (nobody can sign themselves up)"
 else no "anyone who finds the address can sign up — set REGISTRATION_OPEN=false in .env"; fi

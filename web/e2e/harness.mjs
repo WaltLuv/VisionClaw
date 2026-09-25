@@ -86,6 +86,49 @@ function startBrowserUseFixture(dataDir) {
   }));
 }
 
+/**
+ * Browserbase, stood in for: its REST API as the official SDK defines it, with
+ * a real headless Chromium behind connectUrl -- the browser the employee
+ * actually drives, step by step. Its live view is the same https page on the
+ * allowed live-view host as above. A small shop site gives it somewhere to go.
+ */
+function startBrowserbaseFixture() {
+  const chromium = spawn(process.env.CHROMIUM_PATH || '/opt/pw-browsers/chromium',
+    ['--headless=new', '--no-sandbox', '--no-proxy-server', '--remote-debugging-port=0', `--user-data-dir=${mkdtempSync(path.join(tmpdir(), 'vc-e2e-remote-'))}`, 'about:blank'],
+    {stdio: ['ignore', 'ignore', 'pipe']});
+  const released = [];
+  let shopVisits = 0;
+  const shop = createServer((req, res) => {
+    shopVisits++;
+    res.setHeader('Content-Type', 'text/html');
+    res.end('<!doctype html><title>Hardware shop</title><h1>Hardware shop</h1><p>Moen 1222 cartridge: 3 in stock</p>');
+  });
+  return new Promise((resolve, reject) => {
+    let err = '', started = false;
+    chromium.stderr.on('data', d => {
+      err += d;
+      const m = err.match(/DevTools listening on (ws:\/\/\S+)/);
+      // Chromium keeps writing here after announcing itself; start the stand-ins once.
+      if (!m || started) return;
+      started = true;
+      const api = createServer(async (req, res) => {
+        for await (const _ of req) {/* body not needed */}
+        const json = v => {res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(v));};
+        if (req.method === 'POST' && req.url === '/v1/sessions') {json({id: 'bb-e2e', status: 'RUNNING', connectUrl: m[1], keepAlive: false}); return;}
+        if (req.url?.startsWith('/v1/sessions/bb-e2e/debug')) {json({debuggerFullscreenUrl: `https://${LIVE_HOST}/view?session=bb`, debuggerUrl: '', wsUrl: '', pages: []}); return;}
+        if (req.method === 'POST' && req.url === '/v1/sessions/bb-e2e') {released.push('bb-e2e'); json({id: 'bb-e2e', status: 'COMPLETED'}); return;}
+        res.statusCode = 404; res.end('{}');
+      });
+      api.listen(0, '127.0.0.1');
+      shop.listen(0, '127.0.0.1');
+      Promise.all([api, shop].map(s => new Promise(r => s.on('listening', r)))).then(() => resolve({
+        chromium, api, shop, released, apiPort: api.address().port, shopUrl: `http://127.0.0.1:${shop.address().port}/`, shopVisits: () => shopVisits,
+      }));
+    });
+    chromium.on('exit', () => reject(new Error('the stand-in remote browser exited: ' + err.slice(-200))));
+  });
+}
+
 const supplierMapping = {
   items: 'results', sku: 'code', product: 'title', url: 'link', unitPrice: 'price',
   shipping: 'ship', tax: 'taxes', fees: '', inventory: 'stock', availability: 'status',
@@ -127,6 +170,9 @@ export async function startStack({port, tokens}) {
   const model = await startModelFixture();
   const supplier = await startSupplierFixture();
   const browserUse = await startBrowserUseFixture(dataDir);
+  const browserbase = await startBrowserbaseFixture();
+  // The model stand-in runs in this process and needs to know where the shop is.
+  process.env.E2E_SHOP_URL = browserbase.shopUrl;
   const supplierConfig = path.join(dataDir, 'suppliers.json');
   writeFileSync(supplierConfig, JSON.stringify([
     {id: 'riverside_supply', name: 'Riverside Building Supply', method: 'partner_api',
@@ -166,6 +212,8 @@ export async function startStack({port, tokens}) {
       BROWSER_USE_API_BASE: `http://127.0.0.1:${browserUse.apiPort}/api/v4`,
       BROWSER_LIVE_VIEW_HOSTS: LIVE_HOST,
       BROWSER_POLL_MS: '300',
+      BROWSERBASE_API_KEY: 'fixture-only',
+      BROWSERBASE_API_BASE: `http://127.0.0.1:${browserbase.apiPort}`,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -179,6 +227,7 @@ export async function startStack({port, tokens}) {
   return {
     base,
     browserUse,
+    browserbase,
     tail: () => log.split('\n').slice(-6).join('\n'),
     async stop() {
       gateway.kill('SIGKILL');
@@ -186,6 +235,9 @@ export async function startStack({port, tokens}) {
       supplier.server.close();
       browserUse.live.close();
       browserUse.api.close();
+      browserbase.api.close();
+      browserbase.shop.close();
+      browserbase.chromium.kill('SIGKILL');
       rmSync(dataDir, {recursive: true, force: true});
     },
   };

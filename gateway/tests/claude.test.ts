@@ -102,7 +102,7 @@ test('a Claude Code that starts with any tool the gateway does not govern is sto
 
 test('Claude Code receives no service keys and no API key: it signs in with its own login',async t=>{
  const {db,tools,run}=harness();t.after(()=>db.close());
- const secrets={ANTHROPIC_API_KEY:'sk-ant-api-key',CLAUDE_CODE_OAUTH_TOKEN:'oauth-token',BROWSER_USE_API_KEY:'bu',TWILIO_AUTH_TOKEN:'tw',RETELL_API_KEY:'rt',STATE_SECRET:'st',GATEWAY_TOKENS:'tok:alice',GATEWAY_SERVICE_TOKEN:'svc'};
+ const secrets={ANTHROPIC_API_KEY:'sk-ant-api-key',CLAUDE_CODE_OAUTH_TOKEN:'oauth-token',BROWSER_USE_API_KEY:'bu',BROWSERBASE_API_KEY:'bb',TWILIO_AUTH_TOKEN:'tw',RETELL_API_KEY:'rt',STATE_SECRET:'st',GATEWAY_TOKENS:'tok:alice',GATEWAY_SERVICE_TOKEN:'svc'};
  const saved:Record<string,string|undefined>={};for(const [k,v] of Object.entries(secrets)){saved[k]=process.env[k];process.env[k]=v;}
  const record=recordFile();
  try{await fake(db,tools,{final:'ok'},{FAKE_CLAUDE_RECORD:record}).run('alice',run,AbortSignal.timeout(30000));}

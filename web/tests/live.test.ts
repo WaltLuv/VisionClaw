@@ -120,3 +120,17 @@ describe('live browser screen', () => {
     expect(visible('.live')).toBe(false);
   });
 });
+
+describe('live browser screen: a lost connection', () => {
+  it('says the live view lost its connection instead of passing a frozen picture off as live', () => {
+    const {ctx} = harness({});
+    watchBrowser(ctx, 'c1');
+    const frame = q<HTMLIFrameElement>('.live-frame');
+    window.dispatchEvent(new MessageEvent('message', {data: 'browserbase-disconnected', source: frame.contentWindow}));
+    expect(q('.live-status').textContent).toMatch(/lost its connection/);
+    // A message from anywhere else is ignored.
+    closeLive(); watchBrowser(ctx, 'c1');
+    window.dispatchEvent(new MessageEvent('message', {data: 'browserbase-disconnected', source: window}));
+    expect(q('.live-status').textContent).toMatch(/Your employee is browsing/);
+  });
+});

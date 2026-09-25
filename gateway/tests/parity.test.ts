@@ -100,7 +100,7 @@ writeFileSync(${JSON.stringify(dump)},JSON.stringify(process.env));
 let seen='';process.stdin.on('data',d=>{seen+=d;if(seen.includes('\\n')){process.stdout.write(JSON.stringify({type:'result',result:'ok'})+'\\n');}});
 `);
  chmodSync(fake,0o755);
- const secrets={BROWSER_USE_API_KEY:'browser-secret',TWILIO_AUTH_TOKEN:'twilio-secret',RETELL_API_KEY:'retell-secret',EBAY_CLIENT_SECRET:'ebay-secret',STATE_SECRET:'state-secret',GATEWAY_TOKENS:'tok:alice'};
+ const secrets={BROWSER_USE_API_KEY:'browser-secret',BROWSERBASE_API_KEY:'browserbase-secret',TWILIO_AUTH_TOKEN:'twilio-secret',RETELL_API_KEY:'retell-secret',EBAY_CLIENT_SECRET:'ebay-secret',STATE_SECRET:'state-secret',GATEWAY_TOKENS:'tok:alice'};
  const saved:Record<string,string|undefined>={};
  for(const [k,v] of Object.entries(secrets)){saved[k]=process.env[k];process.env[k]=v;}
  const savedModel=process.env.OPENAI_API_KEY;process.env.OPENAI_API_KEY='codex-model-key';
