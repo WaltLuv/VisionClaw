@@ -9,7 +9,13 @@ const reply = (task, alreadyCalledTool) => {
   if (alreadyCalledTool && /\blook up\b|\bversion\b|\bweather\b|\bjacket\b/i.test(task)) {
     return {role: 'assistant', content: 'I read the package registry. The latest published version is listed there under dist-tags.'};
   }
+  if (alreadyCalledTool && /\bbrowse\b/i.test(task)) return {role: 'assistant', content: 'I checked the spec sheet in the browser.'};
   if (alreadyCalledTool) return {role: 'assistant', content: 'Done. The note is saved as task evidence.'};
+  // Work that needs a real website: the employee asks for a browser, which is
+  // approval-gated, and the owner can watch it and take it over.
+  if (/\bbrowse\b/i.test(task)) {
+    return {role: 'assistant', content: null, tool_calls: [{index: 0, id: 'call-1', type: 'function', function: {name: 'browser_work', arguments: JSON.stringify({task: 'Find the M6 bolt spec sheet'})}}]};
+  }
   if (/\bnote\b|\bdocument\b/i.test(task)) {
     return {role: 'assistant', content: null, tool_calls: [{index: 0, id: 'call-1', type: 'function', function: {name: 'document_create', arguments: JSON.stringify({name: 'Site note', text: 'Two boxes of M6 bolts are left on the shelf.'})}}]};
   }

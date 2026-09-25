@@ -11,6 +11,7 @@ import {tasks} from './ui/tasks';
 import {employee} from './ui/employee';
 import {settings} from './ui/settings';
 import {camera} from './ui/camera';
+import {updateLive, watchBrowser} from './ui/live';
 
 const root = document.getElementById('app')!;
 let stopStream: (() => void) | null = null;
@@ -29,6 +30,7 @@ const ctx: Ctx = {
   owner: '',
   session: null as unknown as RealtimeSession,
   go(tab) {ctx.tab = tab; render();},
+  watch(computerId) {watchBrowser(ctx, computerId);},
   async refresh() {
     // Never throws. A failed refresh leaves the last good view on screen and the
     // event stream brings it up to date; letting it reject blanked the app.
@@ -77,6 +79,7 @@ function shell(): HTMLElement {
 
 function render() {
   mount(root, shell());
+  updateLive(ctx);
 }
 
 function toast(message: string) {

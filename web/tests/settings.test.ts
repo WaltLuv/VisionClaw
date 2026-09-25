@@ -13,7 +13,7 @@ const NO_CONNECTIONS: Connections = {
   products: false, browser: false, suppliers: [], mcp: [],
 };
 
-function screen(runtime: 'hermes' | 'anthropic' | undefined, connections: Partial<Connections>) {
+function screen(runtime: 'hermes' | 'anthropic' | 'claude' | undefined, connections: Partial<Connections>) {
   const state = {agent: runtime ? [{id: 'a', runtime}] : [], run: [], skill: [], approval: [], artifact: []} as unknown as State;
   const ctx = {
     state, owner: 'owner', streamOnline: true,
@@ -53,5 +53,20 @@ describe('settings: who carries out tasks', () => {
   it('falls back to the hosted engine before a profile has loaded', () => {
     expect(screen(undefined, {anthropic: true}).pill).toBe('Ready');
     expect(screen(undefined, {hermes: true}).pill).toBe('Not set up');
+  });
+});
+
+describe('settings: Claude Code on the owner\'s subscription', () => {
+  it('names Claude Code and reports ready only when it is signed in', () => {
+    expect(screen('claude', {claude: true})).toMatchObject({pill: 'Ready'});
+    expect(screen('claude', {claude: true}).note).toContain('Claude subscription');
+    expect(screen('claude', {claude: false, anthropic: true}).pill).toBe('Not set up');
+  });
+
+  it('believes the server about which engine will run, over a stale profile', () => {
+    // Profile says anthropic (seeded long ago); the deployment now runs Claude Code.
+    const {pill, note} = screen('anthropic', {runtime: 'claude', claude: true, anthropic: false});
+    expect(pill).toBe('Ready');
+    expect(note).toContain('Claude subscription');
   });
 });

@@ -379,3 +379,68 @@ export async function phoneWidths({browser, base, check, token}) {
     await context.close();
   }
 }
+
+/**
+ * Watching the employee use a browser, and taking it over. The live view is a
+ * real https page framed under the app's own policy. What matters: it is shown,
+ * it is not reloaded by the app's constant re-rendering, taps and typing reach
+ * the website only once the owner has control, and control is only ever
+ * granted after the provider actually paused the employee.
+ */
+export async function liveBrowser({page, check, browserUse, cspViolations}) {
+  await tab(page, 'Today').click();
+  await page.locator('textarea[aria-label="Ask or assign something"]').fill('Browse the web for the M6 bolt spec sheet');
+  await page.locator('button:has-text("Send")').click();
+
+  await waitFor(async () => (await state(page))?.approval.some(a => a.status === 'pending' && a.tool === 'browser_work'), 'the browser request', 150000, 1500);
+  check('using a browser asks first', true);
+  await page.locator('button:has-text("Allow once")').first().click();
+
+  await waitFor(async () => await page.locator('button:has-text("Watch it browse")').count() > 0, 'the Watch card', 60000, 750);
+  check('Today offers to watch the employee browse', true);
+  await page.locator('button:has-text("Watch it browse")').click();
+
+  const live = page.locator('.live');
+  const frame = page.locator('.live-frame');
+  await waitFor(async () => await live.isVisible() && (await frame.getAttribute('src'))?.startsWith(`https://live.visionclaw.test/`), 'the live view to open', 20000, 300);
+  check('the live view opens full screen over the app', await live.isVisible());
+
+  const remote = page.frameLocator('.live-frame');
+  await waitFor(async () => await remote.locator('h1').textContent() === 'Remote site', 'the remote page to load', 20000, 300);
+  check('the live page loads under the app\'s frame policy', true);
+  check('no frame-policy violation', cspViolations.length === 0, cspViolations[0] ?? '');
+
+  // Watching: the view is covered, so a tap on the remote button goes nowhere.
+  const box = await remote.locator('#press').boundingBox();
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  check('while the employee drives, your taps do not reach the website', await remote.locator('#presses').textContent() === '0');
+
+  await page.locator('.live button:has-text("Take over")').click();
+  await waitFor(async () => /You're in control/.test(await page.locator('.live-status').textContent()), 'control to change hands', 20000, 300);
+  check('taking over pauses the employee at the browser provider first', browserUse.calls.includes('pause'));
+  check('the screen says you are in control only after that', true);
+
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  await waitFor(async () => await remote.locator('#presses').textContent() === '1', 'the tap to land', 5000, 200);
+  check('once in control, your taps reach the website', true);
+  await remote.locator('#typed').fill('M6 x 20');
+  check('and so does your typing', await remote.locator('#typed').inputValue() === 'M6 x 20');
+  check('the live view was never reloaded by the app re-rendering', browserUse.loads() === 1, `loads=${browserUse.loads()}`);
+
+  await page.locator('.live button:has-text("Hand back")').click();
+  await waitFor(async () => /Your employee is browsing/.test(await page.locator('.live-status').textContent()), 'control to return', 20000, 300);
+  check('handing back resumes the employee', browserUse.calls.includes('resume'));
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  check('and your taps stop reaching the website again', await remote.locator('#presses').textContent() === '1');
+
+  await page.locator('.live button:has-text("Stop")').click();
+  await waitFor(async () => (await page.locator('.live-status').textContent()) === 'Stopped.', 'the browser to stop', 20000, 300);
+  check('stopping cancels the browser at the provider', browserUse.calls.includes('cancel'));
+  check('and lets go of the live view', (await frame.getAttribute('src')) === 'about:blank');
+  const s = await state(page);
+  check('the gateway keeps no live link once it ends', !s?.computer.some(c => c.liveUrl || c.liveEmbed));
+
+  await page.locator('.live').getByRole('button', {name: '← Back', exact: true}).click();
+  check('Back returns to the app', !(await live.isVisible()));
+  check('and the Watch card is gone', await page.locator('button:has-text("Watch it browse")').count() === 0);
+}

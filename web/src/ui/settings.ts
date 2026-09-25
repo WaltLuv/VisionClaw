@@ -38,14 +38,21 @@ const CAPABILITIES: {key: 'realtime' | 'sms' | 'voice' | 'browser'; label: strin
 let installPrompt: (Event & {prompt(): Promise<void>}) | null = null;
 window.addEventListener('beforeinstallprompt', e => {e.preventDefault(); installPrompt = e as Event & {prompt(): Promise<void>};});
 
+const ENGINE_NAME: Record<string, string> = {
+  anthropic: 'Claude, hosted by Anthropic.',
+  hermes: 'Hermes, running on your own server.',
+  claude: 'Claude Code, signed in with your Claude subscription.',
+};
+
 export function settings(ctx: Ctx): HTMLElement {
   const c = ctx.connections;
   // Readiness follows the runtime this owner is actually set to. Credentials for
   // the OTHER one do not make tasks work, and saying "Ready" because some engine
   // somewhere is configured is how you find out at task time instead of here.
-  const runtime = ctx.state.agent[0]?.runtime === 'hermes' ? 'hermes' : 'anthropic';
-  const engineReady = !!c && c[runtime];
-  const engineName = runtime === 'hermes' ? 'Hermes, running on your own server.' : 'Claude, hosted by Anthropic.';
+  // The server says which engine it will use; the profile is only a fallback for an older gateway.
+  const runtime = c?.runtime ?? ctx.state.agent[0]?.runtime ?? 'anthropic';
+  const engineReady = !!c && !!c[runtime];
+  const engineName = ENGINE_NAME[runtime] ?? ENGINE_NAME.anthropic;
 
   return h('div', {class: 'screen'},
     h('section', {class: 'card'},

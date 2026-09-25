@@ -2,20 +2,23 @@
 
 In progress. Not production complete and not deployed.
 
-The phone client now exists and is served by the gateway; both runtimes work --
+The phone client now exists and is served by the gateway; three runtimes work --
 Hermes against the official runtime in a subprocess, Anthropic Managed Agents
-against a protocol fixture over loopback -- and deployment builds and ships
-both. Nothing here has run against live commercial providers or a physical
+against a protocol fixture over loopback, and Claude Code on the owner's own
+subscription against a stand-in CLI and, for its startup contract, the real
+binary -- and deployment builds and ships them. Nothing here has run against live commercial providers or a physical
 phone.
 
 Exact commands, results and per-criterion labels are in `docs/TESTING.md`.
 
 ## Verified in this checkout
 
-- Gateway typecheck clean; **97/97 tests pass, 0 skipped** across 11 files
-  (96 with 1 skipped when the Hermes runtime is not installed).
-- Web client typechecks and builds; **92/92 tests pass** across 8 files.
-- **90/90 end-to-end checks pass** against a real gateway in a real browser at a
+- Gateway typecheck clean; **117 of 118 tests pass, 1 skipped** across 14
+  files. The skip is the real-binary Claude Code test, which refuses to run
+  inside a Claude Code cloud session with a network; offline it ran, and its
+  startup contract passed.
+- Web client typechecks and builds; **101/101 tests pass** across 9 files.
+- **108/108 end-to-end checks pass** against a real gateway in a real browser at a
   phone viewport, with a synthetic camera and microphone and two configured
   suppliers, one of which is deliberately down.
 
@@ -26,6 +29,11 @@ What the end-to-end run establishes on the real path:
   browser storage;
 - a task running through the gateway to Hermes and a governed tool, with
   evidence stored and shown;
+- watching the employee browse: the live page loads under the app's policy,
+  taps do nothing while the employee drives, taking over pauses it at the
+  provider before the phone says you are in control, your taps and typing
+  then reach the page, the page is loaded once however often the app
+  re-renders, and Stop cancels and lets go of it;
 - the Anthropic Managed Agents path carrying the same governance: its own
   toolsets forced to ask, the gateway's capabilities added as custom tools, a
   purchase held at `needs_user` until the owner decides, a declined action
@@ -87,6 +95,8 @@ used. Per-criterion detail and how to reproduce each suite is in
 | 4 | Cancellation prevents hidden continuation | IMPLEMENTED + VERIFIED |
 | 5 | Hermes selection through the official runtime | IMPLEMENTED + VERIFIED |
 | 5a | Anthropic Managed Agents runtime, same governance | IMPLEMENTED + VERIFIED against a protocol fixture; live Anthropic account BLOCKED ON OWNER CREDENTIAL |
+| 5c | Claude Code on the owner's own subscription, same governance | IMPLEMENTED + VERIFIED against a stand-in CLI through the real bridge; startup contract VERIFIED with the real binary offline; the full loop with the real binary and a real login is for the server (`npm test -- tests/claude.test.ts`, then `deploy/doctor.sh --live`) |
+| 13 | Watch the employee browse and take the browser over | IMPLEMENTED + VERIFIED in a real browser against a stand-in Browser Use; the live service's pause/resume paths and live-view host are unconfirmed; live account BLOCKED ON OWNER CREDENTIAL |
 | 5b | Codex through a supported server-side provider path | IMPLEMENTED + BLOCKED ON OWNER CREDENTIAL — only the credential boundary is verified |
 | 6 | SMS draft / approval / send / inbound status | IMPLEMENTED + VERIFIED against fixtures; live account BLOCKED ON OWNER CREDENTIAL |
 | 7 | Outbound call objective / status / transcript / outcome | IMPLEMENTED + VERIFIED against fixtures; live account BLOCKED ON OWNER CREDENTIAL |
@@ -119,6 +129,23 @@ catalog shapes and should be confirmed against the endpoint an owner is granted.
 Every mapping is overridable per deployment.
 
 ## Fixed in this pass
+
+- **Nothing could run on a Claude subscription.** Managed Agents is an API
+  product and cannot sign in with one. Claude Code is now a third runtime: the
+  unmodified binary, signed in by the owner through Anthropic's own flow, with
+  every built-in tool off and only the gateway's governed tools reachable. The
+  gateway never handles the login and refuses anyone's task but
+  `CLAUDE_CODE_OWNER`'s, which is what Anthropic's terms require.
+- **Changing `AGENT_RUNTIME` never moved an existing owner.** The runtime
+  stamped on a profile when it was first created won forever, so an edit to
+  `.env` only affected owners created afterwards. It is now the live default
+  for every owner who was not given a different engine on purpose, and the
+  phone is told which engine will actually run.
+- **The browser's live view reached the gateway but never the phone.** Today
+  now shows Watch it browse; the live view opens full screen, never reloads on
+  re-render, and can be taken over and handed back.
+- **The page policy allowed framing any https page.** It now allows only the
+  live-view hosts, and nothing else is framed.
 
 - **The hosted runtime could not be reached through the supported install.**
   `deploy/install.sh` required Hermes on the machine and hard-wrote
@@ -155,6 +182,12 @@ Every mapping is overridable per deployment.
   each provider behaves as documented. None has run against a live account.
 - The Codex-through-Hermes provider path is unverified beyond its credential
   boundary.
+- Claude Code's full model loop with the real binary has not run anywhere
+  yet: in this sandbox the CLI is bound to the session's own account, so the
+  test refuses to spend it. It runs on the server.
+- Browser Use's v4 pause/resume paths and its live-view host are unconfirmed
+  against the live service (its documentation was unreachable from here).
+  Wrong either way, take-over fails safe and the phone says why.
 - No live Anthropic account has been used. Every hosted-runtime test answers
   from a loopback fixture, which proves the protocol and the governance the
   gateway enforces, not that Anthropic's service behaves as documented.
@@ -162,7 +195,7 @@ Every mapping is overridable per deployment.
   one can confirm that in a single command.
 - The container image is not built here: this sandbox has a docker client but no
   daemon.
-- `npm run lint` in `gateway/` fails on 30 files. It already failed on 20 at the
+- `npm run lint` in `gateway/` fails on 36 files. It already failed on 20 at the
   `a62fb16` checkpoint; the codebase's dense style does not match its own
   prettier config, and reformatting is a separate decision.
 - `gateway/package.json` declares `engines: >=24` while the tree is tested and

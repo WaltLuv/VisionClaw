@@ -22,9 +22,29 @@ blocking more than it does.
 
 ## Required for tasks to run at all
 
-Exactly one of:
+One of these, chosen with `AGENT_RUNTIME` (`anthropic`, `hermes` or `claude`).
+Changing it in `.env` and restarting moves every owner who was not given a
+different engine on purpose.
 
 - **Hosted runtime**: `ANTHROPIC_API_KEY`. This is the preserved default.
+- **Claude Code on your own Claude subscription** (`AGENT_RUNTIME=claude`):
+  install Claude Code for the user the gateway runs as
+  (https://code.claude.com/docs/en/quickstart), then sign it in once, yourself:
+  `sudo -u <service user> -H claude auth login`. `deploy/install.sh` offers to
+  do this. Set `CLAUDE_CODE_OWNER` to your own account (`owner` for an
+  access-code install) — only that account's tasks run on it.
+
+  Why it is built this way: Anthropic allows "an end user signing in to the
+  unmodified Claude Code binary with their own Claude subscription", and does
+  not allow an app to "collect, store, or intermediate Claude.ai credentials" or
+  to route other people's requests through a Free, Pro or Max plan
+  (https://code.claude.com/docs/en/legal-and-compliance). So the gateway never
+  asks for, reads, stores or forwards your Claude login or any API key — Claude
+  Code signs in through Anthropic's own flow and keeps its own login — and it
+  refuses to run anyone else's task on it. It is for one person. If more people
+  will use your VisionClaw, use the hosted runtime with an API key instead.
+  `bash deploy/doctor.sh` checks it is installed and signed in;
+  `bash deploy/doctor.sh --live` also sends one tiny real task.
 - **Hermes runtime**: install the official runtime on the server and set
   `HERMES_CHECKOUT` (the directory containing `run_agent.py`) and
   `HERMES_PYTHON`, plus the model provider credential it should use. To route
@@ -73,7 +93,12 @@ cannot work.
   `SUPPLIER_CONFIG_PATH`: an id, a display name, an https (or loopback)
   endpoint, an auth variable, and where each normalized field lives in the
   response. Nothing is hardcoded to a particular vendor.
-- **Browser use**: `BROWSER_USE_API_KEY`.
+- **Browser use**: `BROWSER_USE_API_KEY`. While the employee browses, Today
+  shows **Watch it browse**: a full-screen live view you can **Take over** (the
+  employee is paused at Browser Use first) and **Hand back**. The phone only
+  frames live views from Browser Use's own https hosts; a live view served from
+  anywhere else is named on screen instead, and can be allowed with
+  `BROWSER_LIVE_VIEW_HOSTS` (host names, comma-separated).
 - **Connected tools (MCP)**: per-server configuration and its credentials.
 - **Google sign-in**: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and
   `PUBLIC_BASE_URL` registered as an authorised redirect URI on that OAuth

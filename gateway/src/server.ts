@@ -2,6 +2,8 @@ import helmet from "helmet";
 import {fileURLToPath} from "node:url";
 import {existsSync} from "node:fs";
 import {installEmployee} from "./employee/routes.js";
+import {selectRuntime} from "./employee/provider.js";
+import {appContentSecurityPolicy} from "./csp.js";
 import {installLegacyTasks} from "./employee/legacy.js";
 import {registerCommunicationWebhooks} from "./employee/communications.js";
 import {tokenHash} from "./employee/auth.js";
@@ -134,7 +136,7 @@ const validGrant=(owner:string,hash:string)=>[...config.tokens].some(([t,u])=>u=
 const employee=installEmployee(app,userFromRequest,validGrant);
 installLegacyTasks(app,employee,userFromRequest);
 registerCommunicationWebhooks(app,employee.db,(owner,task,key,conversationId)=>{employee.q.create(owner,{task,context:{source:'webhook',conversationId}},key);void employee.q.tick();});
-app.use((req,res,next)=>{if(req.path==='/'||req.path.startsWith('/assets/'))res.set('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; media-src 'self' blob:; connect-src 'self' wss:; frame-src https:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'");next();});
+app.use((req,res,next)=>{if(req.path==='/'||req.path.startsWith('/assets/'))res.set('Content-Security-Policy',appContentSecurityPolicy());next();});
 // The phone client. WEB_DIST_DIR overrides it; the default mirrors the repo
 // layout, which the image reproduces so this resolves the same way in both. A
 // missing build is announced at startup, because the symptom otherwise is a
@@ -187,7 +189,7 @@ app.post("/livekit-token", async (req, res) => {
   // Pre-warm: session creation costs ~3-4s, which on a lazy path lands on the
   // call's first task. Kicking it off now hides the cold start behind call
   // setup and greeting time.
-  if(process.env.ANTHROPIC_API_KEY && employee.db.list(userId,"agent")[0]?.runtime!=="hermes")void ensureUser(userId).catch(()=>console.warn("[provision] pre-warm failed"));
+  if(process.env.ANTHROPIC_API_KEY && selectRuntime(employee.db.list(userId,"agent")[0],{id:""})==="anthropic")void ensureUser(userId).catch(()=>console.warn("[provision] pre-warm failed"));
   const { AccessToken } = await import("livekit-server-sdk");
   // The engine choice (gemini | openai) rides as participant metadata; the
   // worker reads it when the user joins and picks the realtime model.

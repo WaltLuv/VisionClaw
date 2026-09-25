@@ -97,6 +97,7 @@ export function today(ctx: Ctx): HTMLElement {
     cameraSection(ctx, send),
     ...ctx.cards.map(cardView),
     ...approvals.map(a => approvalCard(a, () => void ctx.refresh(), m => ctx.toast(m))),
+    browsingCard(ctx),
     run ? runPanel(ctx, run) : null,
     transcriptPanel(ctx),
     h('section', {class: 'card'},
@@ -176,6 +177,17 @@ function voiceRow(ctx: Ctx, _send: (task: string) => Promise<void>): HTMLElement
     state === 'reconnecting' ? h('span', {class: 'pill warn', text: 'Reconnecting…'}) : null,
     ctx.sessionDetail && !ctx.session.live ? h('span', {class: 'pill warn', text: ctx.sessionDetail}) : null,
   );
+}
+
+/** While the employee is using a browser, one tap to watch it (and take it over). */
+function browsingCard(ctx: Ctx): HTMLElement | null {
+  const c = ctx.state.computer.find(x => x.status === 'starting' || x.status === 'working');
+  if (!c) return null;
+  const yours = c.control === 'owner';
+  return h('section', {class: 'card'},
+    h('p', {class: 'eyebrow', text: yours ? 'You have the browser' : 'Using the web'}),
+    h('h3', {text: c.task}),
+    h('button', {class: 'primary', onclick: () => ctx.watch(c.id)}, yours ? 'Back to the browser' : 'Watch it browse'));
 }
 
 function runPanel(ctx: Ctx, run: ReturnType<typeof activeRun> & {}): HTMLElement {

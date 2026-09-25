@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # Tells you what is working and what is not, in plain words.
 #
-#     bash deploy/doctor.sh
+#     bash deploy/doctor.sh          (checks only; uses nothing from any plan)
+#     bash deploy/doctor.sh --live   (also sends one tiny real task)
 set -uo pipefail
+LIVE=0; [ "${1:-}" = "--live" ] && LIVE=1
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_FILE="$ROOT/.env"
@@ -48,6 +50,28 @@ if [ "${AGENT_RUNTIME:-anthropic}" = "hermes" ]; then
     no "set to Hermes, but it is not on this machine — set HERMES_CHECKOUT to the folder holding run_agent.py"
   fi
   [ -n "${ANTHROPIC_API_KEY:-}" ] && meh "Claude is set up too — switch with AGENT_RUNTIME=anthropic in .env"
+elif [ "${AGENT_RUNTIME:-anthropic}" = "claude" ]; then
+  # Claude Code keeps its own login in the service user's home, so ask it as
+  # that user. The app never reads the login; neither does this script.
+  SVC="$(systemctl show -p User --value fieldagent 2>/dev/null)"; SVC="${SVC:-$(id -un)}"
+  as_svc() { if [ "$(id -un)" = "$SVC" ]; then "$@"; else sudo -u "$SVC" -H "$@"; fi; }
+  BIN="${CLAUDE_CODE_BIN:-claude}"
+  if ! as_svc "$BIN" --version >/dev/null 2>&1; then
+    no "set to Claude Code, but it is not installed for $SVC — see https://code.claude.com/docs/en/quickstart"
+  elif ! as_svc "$BIN" auth status --json 2>/dev/null | grep -q '"loggedIn": *true'; then
+    no "set to Claude Code, but it is not signed in — run: sudo -u $SVC -H $BIN auth login"
+  else
+    ok "set to Claude Code, signed in with your Claude subscription"
+    if [ -n "${CLAUDE_CODE_OWNER:-}" ]; then ok "only $CLAUDE_CODE_OWNER's tasks run on it (a subscription is for one person)"
+    else no "CLAUDE_CODE_OWNER is not set, so no task can use it — add CLAUDE_CODE_OWNER=owner to .env"; fi
+    if [ "$LIVE" = 1 ]; then
+      if (cd /tmp && as_svc "$BIN" -p 'Reply with exactly: OK' --tools '' --strict-mcp-config --no-session-persistence --output-format json 2>/dev/null) | grep -q '"result": *"OK'; then ok "answered a live test"
+      else no "did not answer a live test — try: sudo -u $SVC -H $BIN -p hello"; fi
+    else
+      meh "to try it for real (uses a little of your plan): bash deploy/doctor.sh --live"
+    fi
+  fi
+  [ -n "${ANTHROPIC_API_KEY:-}" ] && meh "hosted Claude is set up too — switch with AGENT_RUNTIME=anthropic in .env"
 else
   # A key that is merely present is not a key that works. This asks Anthropic.
   if [ -z "${ANTHROPIC_API_KEY:-}" ]; then

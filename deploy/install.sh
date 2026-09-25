@@ -12,6 +12,8 @@
 # in .env:
 #   Claude, hosted by Anthropic -- nothing to install, needs an API key.
 #   Hermes, running on this machine -- nothing to pay for, needs to be installed.
+#   Claude Code, on your own Claude subscription -- needs Claude Code installed
+#     for the service user and signed in once.
 #
 # If you use Hermes it has to be on THIS machine: the gateway starts it as a
 # local program, so it has to be able to see Hermes' files. That is also why
@@ -96,28 +98,57 @@ say "A few things only you know"
 DOMAIN="$(ask PUBLIC_DOMAIN 'The web address you will open on your phone (e.g. agent.yourcompany.com)')"
 [ -n "$DOMAIN" ] || { bad "A web address is required: phones only allow the camera and microphone over https."; exit 1; }
 GEMINI_KEY="$(ask GOOGLE_API_KEY 'Your Google Gemini API key (for seeing and talking)')"
-if [ "$HERMES_READY" = true ]; then
-  ANTHROPIC_KEY="$(ask ANTHROPIC_API_KEY 'Your Anthropic API key, so Claude can do the work (blank to use the Hermes on this machine)')"
+# Claude Code, for owners who want to use their own Claude subscription. It
+# signs in through Anthropic's own flow and keeps its own login; this script
+# and the app never see it.
+CLAUDE_BIN="${CLAUDE_CODE_BIN:-$(sudo -u "$SERVICE_USER" -H bash -lc 'command -v claude' 2>/dev/null || true)}"
+[ -n "$CLAUDE_BIN" ] && info "Claude Code: $CLAUDE_BIN"
+
+if [ "$HERMES_READY" = true ] || [ -n "$CLAUDE_BIN" ]; then
+  ANTHROPIC_KEY="$(ask ANTHROPIC_API_KEY 'Your Anthropic API key, for hosted Claude (blank to skip)')"
 else
   ANTHROPIC_KEY="$(ask ANTHROPIC_API_KEY 'Your Anthropic API key, so Claude can do the work')"
 fi
 
-# Which brain does the work. Both can be configured; only one runs at a time,
-# and swapping is one line in .env afterwards.
-if [ -n "$ANTHROPIC_KEY" ] && [ "$HERMES_READY" = true ]; then
-  RUNTIME="$(ask AGENT_RUNTIME 'Who should do the work to start with -- type anthropic or hermes' anthropic)"
-  case "$RUNTIME" in anthropic|hermes) ;; *) info "Not a choice I know; using anthropic."; RUNTIME=anthropic ;; esac
-elif [ -n "$ANTHROPIC_KEY" ]; then
-  RUNTIME=anthropic
-elif [ "$HERMES_READY" = true ]; then
-  RUNTIME=hermes
-else
-  bad "Nothing can do the work yet."
-  info "Give an Anthropic API key when asked, or install Hermes on this machine"
-  info "(the folder holding run_agent.py) and run this again. For a Hermes in an"
-  info "unusual place, point at it directly:"
-  info "  sudo HERMES_CHECKOUT=/opt/hermes/.venv/lib/python3.11/site-packages bash deploy/install.sh"
-  exit 1
+# Which brain does the work. Several can be set up; one runs at a time, and
+# changing AGENT_RUNTIME in .env (then restarting) switches it.
+CHOICES=""
+[ -n "$ANTHROPIC_KEY" ] && CHOICES="$CHOICES anthropic"
+[ "$HERMES_READY" = true ] && CHOICES="$CHOICES hermes"
+[ -n "$CLAUDE_BIN" ] && CHOICES="$CHOICES claude"
+CHOICES="${CHOICES# }"
+case "$CHOICES" in
+  "")
+    bad "Nothing can do the work yet."
+    info "Any one of these will do:"
+    info "  - give an Anthropic API key when asked;"
+    info "  - use your Claude subscription: install Claude Code for $SERVICE_USER"
+    info "    (https://code.claude.com/docs/en/quickstart), then run this again;"
+    info "  - install Hermes on this machine. For a Hermes in an unusual place:"
+    info "    sudo HERMES_CHECKOUT=/opt/hermes/.venv/lib/python3.11/site-packages bash deploy/install.sh"
+    exit 1 ;;
+  *" "*)
+    RUNTIME="$(ask AGENT_RUNTIME "Who should do the work -- type one of: $CHOICES" "${CHOICES%% *}")"
+    case " $CHOICES " in *" $RUNTIME "*) ;; *) RUNTIME="${CHOICES%% *}"; info "Not one of the choices; using $RUNTIME." ;; esac ;;
+  *) RUNTIME="$CHOICES" ;;
+esac
+
+if [ "$RUNTIME" = claude ]; then
+  # Anthropic allows signing in to the unmodified Claude Code with your own
+  # subscription; it does not allow an app to collect that login or to run
+  # other people's requests on it. So the owner signs in themselves, here,
+  # and only the owner's own tasks are sent to it (CLAUDE_CODE_OWNER).
+  if sudo -u "$SERVICE_USER" -H "$CLAUDE_BIN" auth status --json 2>/dev/null | grep -q '"loggedIn": *true'; then
+    info "Claude Code is signed in."
+  else
+    info "Claude Code needs to be signed in to your Claude account, once."
+    info "It opens Anthropic's own sign-in; this app never sees your login."
+    printf '  Sign in now? [Y/n]: ' >&2; read -r yn < /dev/tty || yn=n
+    case "$yn" in [nN]*) ;; *) sudo -u "$SERVICE_USER" -H "$CLAUDE_BIN" auth login < /dev/tty || true ;; esac
+    sudo -u "$SERVICE_USER" -H "$CLAUDE_BIN" auth status --json 2>/dev/null | grep -q '"loggedIn": *true' \
+      && info "Claude Code is signed in." \
+      || info "Not signed in yet. Do it any time with: sudo -u $SERVICE_USER -H $CLAUDE_BIN auth login"
+  fi
 fi
 info "Work goes to: $RUNTIME"
 LK_URL="$(ask LIVEKIT_URL 'LiveKit URL (leave blank to set up voice later)')"
@@ -152,7 +183,8 @@ GATEWAY_SERVICE_TOKEN=$SERVICE_TOKEN
 STORE_PATH=$ROOT/data/store.json
 EMPLOYEE_DATA_DIR=$ROOT/data
 
-# Who does the work. Change this one line to switch: anthropic or hermes.
+# Who does the work: anthropic, hermes or claude. Change this line and
+# restart (sudo systemctl restart fieldagent) to switch.
 AGENT_RUNTIME=$RUNTIME
 
 # Claude, hosted by Anthropic.
@@ -161,6 +193,11 @@ ANTHROPIC_API_KEY=$ANTHROPIC_KEY
 # Hermes, running on this machine.
 HERMES_CHECKOUT=$HERMES_DIR
 HERMES_PYTHON=$PY
+
+# Claude Code, signed in with your own Claude subscription. Only your own
+# tasks may run on it: a subscription is for one person.
+CLAUDE_CODE_BIN=$CLAUDE_BIN
+CLAUDE_CODE_OWNER=owner
 
 # Gemini gives it eyes and a voice.
 GOOGLE_API_KEY=$GEMINI_KEY

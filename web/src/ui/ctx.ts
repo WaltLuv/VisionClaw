@@ -20,6 +20,8 @@ export interface Ctx {
   busy: boolean;
   owner: string;
   go(tab: Tab): void;
+  /** Open the live view of one of the employee's browsers. */
+  watch(computerId: string): void;
   refresh(): Promise<void>;
   rerender(): void;
   toast(message: string): void;

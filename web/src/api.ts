@@ -15,12 +15,14 @@ export interface Row {id: string; [key: string]: any}
 export interface Run extends Row {task: string; status: RunStatus; result?: string; error?: string; recovered?: boolean; conversationId?: string; createdAt?: string; completedAt?: string; context?: {source?: Source; attachments?: string[]; visualDescription?: string}}
 export interface Approval extends Row {runId: string; tool: string; label: string; effect: Effect; details: Record<string, unknown>; status: 'pending' | 'approved' | 'denied'; expiresAt: number}
 export interface Artifact extends Row {runId?: string; kind: string; name: string; mime?: string; text?: string}
-export interface Agent extends Row {name: string; title: string; instructions: string; runtime: 'hermes' | 'anthropic'; skills: string[]; avatar?: string; provider?: string; model?: string}
+export interface Agent extends Row {name: string; title: string; instructions: string; runtime: 'hermes' | 'anthropic' | 'claude'; skills: string[]; avatar?: string; provider?: string; model?: string}
 export interface Skill extends Row {key: string; name: string; instructions: string}
 export interface Memory extends Row {kind: 'profile' | 'work' | 'note' | 'workspace'; text: string}
 export interface Contact extends Row {name?: string}
 export interface Workflow extends Row {name: string; task: string; scheduledAt?: string; enabled: boolean}
 export interface Action extends Row {runId: string; name: string; status: string; effect: Effect}
+/** A browser the employee is using. liveEmbed is the provider's live view, present only while it runs and only from an allowed host. */
+export interface Computer extends Row {runId: string; task: string; status: 'queued' | 'starting' | 'working' | 'completed' | 'failed' | 'cancelled' | 'closed' | 'cleanup_pending'; control?: 'agent' | 'owner'; liveEmbed?: string | null; liveHost?: string}
 
 export type AccessMethod = 'official_api' | 'partner_api' | 'mcp' | 'browser' | 'manual';
 export type SupplierStatus = 'ok' | 'failed' | 'unconfigured' | 'timeout';
@@ -45,13 +47,15 @@ export interface State {
   run: Run[]; agent: Agent[]; skill: Skill[]; memory: Memory[]; conversation: Row[]; message: Row[];
   approval: Approval[]; artifact: Artifact[]; contact: Contact[]; communication: Row[];
   material: Material[]; offer: Offer[]; cart: Row[]; quote: Row[]; order: Row[];
-  workflow: Workflow[]; computer: Row[]; policy: Row[]; action: Action[]; evidence_link: Row[];
+  workflow: Workflow[]; computer: Computer[]; policy: Row[]; action: Action[]; evidence_link: Row[];
 }
 
 // What the gateway has credentials for. Used to disable surfaces honestly
 // instead of showing controls that cannot work.
 export interface Connections {
-  realtime: boolean; hermes: boolean; anthropic: boolean; sms: boolean; voice: boolean;
+  /** The engine this owner's tasks will actually run on; the server decides. */
+  runtime?: 'hermes' | 'anthropic' | 'claude';
+  realtime: boolean; hermes: boolean; anthropic: boolean; claude?: boolean; sms: boolean; voice: boolean;
   products: boolean; browser: boolean; suppliers: SupplierConnection[];
   mcp: {id: string; tools: string[]}[]; mcpError?: string;
 }
@@ -128,6 +132,10 @@ export const api = {
   runWorkflow: (id: string, key: string) => call<Run>('POST', `/api/workflows/${encodeURIComponent(id)}/run`, {}, {'idempotency-key': key}),
 
   stopComputer: (id: string) => call<void>('POST', `/api/computers/${encodeURIComponent(id)}/stop`, {}),
+  // The gateway pauses the employee at the browser provider before it answers;
+  // a refusal comes back as an error, and control never changes on this side alone.
+  takeOver: (id: string) => call<Pick<Computer, 'id' | 'status' | 'control'>>('POST', `/api/computers/${encodeURIComponent(id)}/takeover`, {}),
+  handBack: (id: string) => call<Pick<Computer, 'id' | 'status' | 'control'>>('POST', `/api/computers/${encodeURIComponent(id)}/handback`, {}),
   deleteEverything: () => call<void>('DELETE', '/api/employee-data'),
 
   // The room JWT is minted server-side and lives 15 minutes. The realtime API

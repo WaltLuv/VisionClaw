@@ -8,7 +8,9 @@
 // call. One shared Browser Use account (BROWSER_USE_API_KEY); unauthenticated
 // (no per-user login state stored) in this version.
 
-const BASE = "https://api.browser-use.com/api/v4";
+// Overridable so tests and the end-to-end run can stand a fixture in for the service.
+export const browserUseBase = (): string =>
+  (process.env.BROWSER_USE_API_BASE ?? "https://api.browser-use.com/api/v4").replace(/\/$/, "");
 const TERMINAL = new Set(["completed", "failed", "cancelled"]);
 
 export function browseEnabled(): boolean {
@@ -38,7 +40,7 @@ export async function startBrowse(task: string, onCreated?:(id:string)=>void, si
   signal?.throwIfAborted();
   const cap = Number(process.env.BROWSER_USE_MAX_COST_USD ?? 0.75);
   const model = process.env.BROWSER_USE_MODEL; // omit -> Browser Use default (cheapest/fastest)
-  const create = await fetch(`${BASE}/runs`, {
+  const create = await fetch(`${browserUseBase()}/runs`, {
     method: "POST",
     signal:signal??AbortSignal.timeout(30000),
     headers: buHeaders(),
@@ -76,7 +78,7 @@ export async function startBrowse(task: string, onCreated?:(id:string)=>void, si
     signal?.throwIfAborted();
     await sleep(1500);
     try {
-      const ev = await fetch(`${BASE}/runs/${runId}/events`, { headers: buHeaders() });
+      const ev = await fetch(`${browserUseBase()}/runs/${runId}/events`, { headers: buHeaders() });
       if (!ev.ok) continue;
       const { events } = (await ev.json()) as {
         events?: Array<{ type?: string; data?: { live_view_url?: string | null } }>;
@@ -122,7 +124,7 @@ export interface BrowseOutcome {
  * computer-use agent did -- not just that a task ran.
  */
 export async function fetchRunDetail(runId: string): Promise<BrowseDetail> {
-  const run = (await (await fetch(`${BASE}/runs/${runId}`, { headers: buHeaders() })).json()) as {
+  const run = (await (await fetch(`${browserUseBase()}/runs/${runId}`, { headers: buHeaders() })).json()) as {
     status?: string;
     result?: string | null;
     error?: string | null;
@@ -135,7 +137,7 @@ export async function fetchRunDetail(runId: string): Promise<BrowseDetail> {
   const steps: string[] = [];
   let stepCount = 0;
   try {
-    const ev = await fetch(`${BASE}/runs/${runId}/events`, { headers: buHeaders() });
+    const ev = await fetch(`${browserUseBase()}/runs/${runId}/events`, { headers: buHeaders() });
     if (ev.ok) {
       const { events } = (await ev.json()) as {
         events?: Array<{ type?: string; data?: { part?: { type?: string; text?: string; tool?: string } } }>;
@@ -192,14 +194,14 @@ export async function awaitBrowse(
       await sleep(3000);
       let status = "";
       try {
-        const s = await fetch(`${BASE}/runs/${runId}/status`, { headers: buHeaders() });
+        const s = await fetch(`${browserUseBase()}/runs/${runId}/status`, { headers: buHeaders() });
         if (s.ok) status = ((await s.json()) as { status: string }).status;
       } catch {
         continue;
       }
       if (TERMINAL.has(status)) {
         const detail = await fetchRunDetail(runId);
-        const cost = (await (await fetch(`${BASE}/runs/${runId}`, { headers: buHeaders() })).json())
+        const cost = (await (await fetch(`${browserUseBase()}/runs/${runId}`, { headers: buHeaders() })).json())
           .totalCostUsd as string | undefined;
         const text =
           status === "completed"

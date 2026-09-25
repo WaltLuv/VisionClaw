@@ -124,3 +124,18 @@ let seen='';process.stdin.on('data',d=>{seen+=d;if(seen.includes('\\n')){process
   rmSync(dir,{recursive:true,force:true});
  }
 });
+
+// Editing AGENT_RUNTIME in .env has to move an owner who already exists. The
+// runtime stamped on a profile when it was first seeded used to win forever,
+// so switching engines only ever affected owners created after the edit.
+test('AGENT_RUNTIME moves existing owners who were never given a runtime of their own',()=>{
+ const before=process.env.AGENT_RUNTIME;
+ try{
+  process.env.AGENT_RUNTIME='claude';
+  assert.equal(selectRuntime({id:'a',runtime:'anthropic'},{id:'r'}),'claude','a profile seeded under the old default follows the new one');
+  assert.equal(selectRuntime({id:'a',runtime:'hermes',runtimeFrom:'owner'},{id:'r'}),'hermes','a deliberate per-owner choice is kept');
+  assert.equal(selectRuntime({id:'a',runtime:'anthropic'},{id:'r',runtime:'hermes'}),'hermes','a started run still keeps its engine');
+  delete process.env.AGENT_RUNTIME;
+  assert.equal(selectRuntime({id:'a',runtime:'hermes'},{id:'r'}),'hermes','with no deployment default the profile decides, as before');
+ }finally{if(before===undefined)delete process.env.AGENT_RUNTIME;else process.env.AGENT_RUNTIME=before;}
+});

@@ -1,12 +1,14 @@
 // Process and browser lifecycle for the end-to-end run. Keeps the scenarios
 // free of setup so each one reads as the behaviour it is checking.
 import {createRequire} from 'node:module';
-import {spawn} from 'node:child_process';
+import {spawn, execFileSync} from 'node:child_process';
 import {mkdtempSync, rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {createServer} from 'node:http';
+import {createServer as createHttpsServer} from 'node:https';
+import {readFileSync} from 'node:fs';
 import {writeFileSync} from 'node:fs';
 import {startModelFixture} from './model-fixture.mjs';
 
@@ -26,6 +28,50 @@ function startSupplierFixture() {
   });
   server.listen(0);
   return new Promise(resolve => server.on('listening', () => resolve({server, port: server.address().port})));
+}
+
+/**
+ * Browser Use, stood in for. The API side records every pause, resume and
+ * cancel. The live view side is a small "website" served over https from
+ * live.visionclaw.test -- an allowed live-view host -- so the app frames it
+ * under exactly the policy it ships with. The page counts its own loads, so a
+ * re-render that reloaded the view would show up as a second load.
+ */
+export const LIVE_HOST = 'live.visionclaw.test';
+const LIVE_PAGE = `<!doctype html><meta name="viewport" content="width=device-width"><title>Remote site</title>
+<style>body{font:18px sans-serif;margin:0;padding:20px}button{font-size:22px;padding:18px 28px}input{font-size:20px;margin-top:16px;width:80%}</style>
+<h1>Remote site</h1><button id="press">Press me</button><p>Presses: <output id="presses">0</output></p><input id="typed" aria-label="Remote input">
+<script>document.getElementById('press').onclick=()=>{const o=document.getElementById('presses');o.textContent=String(Number(o.textContent)+1);};</script>`;
+
+function startBrowserUseFixture(dataDir) {
+  // A certificate made for this run only, so no private key -- test or not -- is ever committed.
+  const key = path.join(dataDir, 'live-key.pem'), cert = path.join(dataDir, 'live-cert.pem');
+  execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', key, '-out', cert, '-days', '1', '-subj', `/CN=${LIVE_HOST}`], {stdio: 'ignore'});
+  const calls = [];
+  let status = 'running', loads = 0;
+  const live = createHttpsServer({key: readFileSync(key), cert: readFileSync(cert)}, (req, res) => {
+    if (!req.url?.startsWith('/view')) {res.statusCode = 404; res.end(); return;}
+    loads++;
+    res.setHeader('Content-Type', 'text/html');
+    res.end(LIVE_PAGE);
+  });
+  const api = createServer((req, res) => {
+    req.resume();
+    const json = (code, value) => {res.statusCode = code; res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(value));};
+    if (req.method === 'POST' && req.url === '/api/v4/runs') {status = 'running'; json(200, {id: 'bu-e2e'}); return;}
+    const m = req.url?.match(/^\/api\/v4\/runs\/[^/]+(?:\/(\w+))?$/);
+    if (!m) {json(404, {}); return;}
+    const action = m[1];
+    if (req.method === 'POST') {calls.push(action); if (action === 'cancel') status = 'cancelled'; json(200, {}); return;}
+    if (action === 'events') {json(200, {events: [{type: 'browser.ready', data: {live_view_url: `https://${LIVE_HOST}/view?session=e2e`}}]}); return;}
+    if (action === 'status') {json(200, {status}); return;}
+    json(200, {status, result: status === 'completed' ? 'The spec sheet lists M6 x 20 mm.' : null});
+  });
+  live.listen(0, '127.0.0.1');
+  api.listen(0, '127.0.0.1');
+  return Promise.all([live, api].map(server => new Promise(r => server.on('listening', r)))).then(() => ({
+    live, api, calls, livePort: live.address().port, apiPort: api.address().port, loads: () => loads,
+  }));
 }
 
 const supplierMapping = {
@@ -68,6 +114,7 @@ export async function startStack({port, tokens}) {
   const dataDir = mkdtempSync(path.join(tmpdir(), 'vc-e2e-'));
   const model = await startModelFixture();
   const supplier = await startSupplierFixture();
+  const browserUse = await startBrowserUseFixture(dataDir);
   const supplierConfig = path.join(dataDir, 'suppliers.json');
   writeFileSync(supplierConfig, JSON.stringify([
     {id: 'riverside_supply', name: 'Riverside Building Supply', method: 'partner_api',
@@ -103,6 +150,10 @@ export async function startStack({port, tokens}) {
       // eBay must stay out of the search even with this whole stack running.
       EBAY_CLIENT_ID: 'fixture-only',
       EBAY_CLIENT_SECRET: 'fixture-only',
+      BROWSER_USE_API_KEY: 'fixture-only',
+      BROWSER_USE_API_BASE: `http://127.0.0.1:${browserUse.apiPort}/api/v4`,
+      BROWSER_LIVE_VIEW_HOSTS: LIVE_HOST,
+      BROWSER_POLL_MS: '300',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -115,11 +166,14 @@ export async function startStack({port, tokens}) {
 
   return {
     base,
+    browserUse,
     tail: () => log.split('\n').slice(-6).join('\n'),
     async stop() {
       gateway.kill('SIGKILL');
       model.server.close();
       supplier.server.close();
+      browserUse.live.close();
+      browserUse.api.close();
       rmSync(dataDir, {recursive: true, force: true});
     },
   };
@@ -130,10 +184,14 @@ export async function startStack({port, tokens}) {
  * secure context, which http://127.0.0.1 is, so the real capture path runs
  * exactly as it would on a phone over https.
  */
-export function launchBrowser() {
+export function launchBrowser({livePort} = {}) {
   return chromium.launch({
     executablePath: process.env.CHROMIUM_PATH || '/opt/pw-browsers/chromium',
-    args: ['--no-sandbox', '--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream'],
+    args: ['--no-sandbox', '--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream',
+      // The live-view "website" answers as https://live.visionclaw.test on the
+      // standard port, which is what the app's frame policy names. The test
+      // browser only ever talks to loopback, so it needs no proxy.
+      ...(livePort ? [`--host-resolver-rules=MAP ${LIVE_HOST} 127.0.0.1:${livePort}`, '--no-proxy-server'] : [])],
   });
 }
 
@@ -141,6 +199,8 @@ const PHONE = {
   viewport: {width: 390, height: 844},
   userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
   permissions: ['camera', 'microphone'],
+  // Only for the run's own self-signed live-view certificate.
+  ignoreHTTPSErrors: true,
 };
 
 export async function openPhone(browser, base) {

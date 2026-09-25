@@ -83,18 +83,25 @@ Required to do anything:
 | `PUBLIC_BASE_URL` | Public origin; must be HTTPS when `NODE_ENV=production` |
 | `STORE_PATH` | Store file; its directory is the default data directory |
 
-One runtime is required: `ANTHROPIC_API_KEY`, or `HERMES_CHECKOUT` plus
-`HERMES_PYTHON` and a model provider credential. Both may be configured at
-once; `AGENT_RUNTIME` decides which one carries out tasks, and switching is
-that one line. `deploy/install.sh` asks for whichever you have and writes both;
-`deploy/doctor.sh` reports on the selected one and checks an Anthropic key
-against Anthropic rather than only checking that it is present. Optional
+One runtime is required: `ANTHROPIC_API_KEY`; or `HERMES_CHECKOUT` plus
+`HERMES_PYTHON` and a model provider credential; or Claude Code installed for
+the service user and signed in with your own Claude subscription, with
+`CLAUDE_CODE_OWNER` naming your account (see `docs/OWNER-ACTIONS.md` for why
+only one account may use it). Several may be configured at once;
+`AGENT_RUNTIME` (`anthropic`, `hermes` or `claude`) decides which carries out
+tasks, and changing it and restarting moves every owner who was not given a
+different engine on purpose. `deploy/install.sh` asks for whichever you have
+and writes them all; `deploy/doctor.sh` reports on the selected one, checks an
+Anthropic key against Anthropic, and asks Claude Code whether it is signed in. Optional
 capability credentials, and what stays unavailable without each, are listed in
 `docs/OWNER-ACTIONS.md`.
 
 Useful extras: `EMPLOYEE_DATA_DIR`, `WEB_DIST_DIR`, `RUN_CAPACITY` (1-99,
-default 2), `AGENT_RUNTIME` (`anthropic` or `hermes`), `MANAGED_READ_TOOLS`.
+default 2), `AGENT_RUNTIME` (`anthropic`, `hermes` or `claude`),
+`MANAGED_READ_TOOLS`, `CLAUDE_CODE_BIN`, `CLAUDE_CODE_MODEL`,
+`BROWSER_LIVE_VIEW_HOSTS`.
 
-Invalid values for `AGENT_RUNTIME`, `RUN_CAPACITY`, `COMPUTER_CAPACITY` and a
-non-HTTPS production `PUBLIC_BASE_URL` are rejected at startup rather than
+Invalid values for `AGENT_RUNTIME`, `RUN_CAPACITY`, `COMPUTER_CAPACITY`,
+`BROWSER_LIVE_VIEW_HOSTS` (it becomes part of the page's Content-Security-Policy)
+and a non-HTTPS production `PUBLIC_BASE_URL` are rejected at startup rather than
 surfacing later as a confusing failure.

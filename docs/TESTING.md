@@ -6,16 +6,17 @@ credential this environment does not have, that is stated rather than implied.
 ## What runs without any credential
 
 ```bash
-cd gateway && npm ci && npx tsc --noEmit && npm test     # 97 tests
-cd web     && npm ci && npm run verify                   # build + 92 tests
+cd gateway && npm ci && npx tsc --noEmit && npm test     # 118 tests
+cd web     && npm ci && npm run verify                   # build + 101 tests
 ```
 
 `npm run verify` in `web/` builds first on purpose: the packaging tests read the
 real `web/dist` output rather than a description of it.
 
-Without `HERMES_CHECKOUT` the gateway suite reports 96 passed and 1 skipped --
-the skipped one is the Hermes subprocess test. Nothing else needs a credential,
-including the Anthropic runtime tests (see below).
+Two gateway tests drive a real runtime binary and skip, saying why, when it is
+not available: the Hermes subprocess test (needs `HERMES_CHECKOUT`) and the
+real Claude Code test (needs `claude` installed; see below). Everything else
+needs no credential, including the Anthropic and Claude Code runtime tests.
 
 ## Running the Hermes tests
 
@@ -27,7 +28,7 @@ python3 -m venv .hermes-venv
 ./.hermes-venv/bin/pip install hermes-agent==0.19.0
 export HERMES_CHECKOUT="$(./.hermes-venv/bin/python -c 'import sysconfig;print(sysconfig.get_paths()["purelib"])')"
 export HERMES_PYTHON="$PWD/.hermes-venv/bin/python"
-cd gateway && npm test                                   # 97 passed, 0 skipped
+cd gateway && npm test                                   # 117 passed, 1 skipped (Claude Code, below)
 ```
 
 `HERMES_CHECKOUT` must be the directory containing `run_agent.py`; for a pip
@@ -80,6 +81,91 @@ What this does **not** establish: that Anthropic's own service behaves as
 documented, or that a real key works. That is one `deploy/doctor.sh` run away
 on a machine that has one.
 
+## Verifying the Claude Code runtime
+
+`tests/claude.test.ts`. Claude Code runs on the owner's own Claude
+subscription, so the rules under test are Anthropic's as much as ours: the
+gateway never handles the login and never runs anyone else's task on it.
+
+All but one of its checks drive a stand-in CLI
+(`tests/fixtures/fake-claude.mjs`) that speaks Claude Code's stream-json
+protocol and is the MCP client of the gateway's **real** bridge, socket channel
+and ToolGateway. They establish:
+
+- the command line switches off every built-in tool (`--tools ""`), loads no MCP
+  server but the gateway's (`--strict-mcp-config`), refuses rather than asks
+  (`--permission-mode dontAsk`, `--permission-prompts none`), and never uses
+  `--dangerously-skip-permissions` or `--bare`;
+- a Claude Code that reports any tool the gateway does not govern is stopped,
+  and a tool call that races that startup report is refused, not run;
+- a purchase waits for the owner and is charged once, after approval; a
+  declined message is never sent and the refusal is returned to the model;
+- only `CLAUDE_CODE_OWNER` can have tasks run on it; anyone else's task is
+  refused before Claude Code starts;
+- no service key, no `ANTHROPIC_API_KEY` and no `CLAUDE_CODE_OAUTH_TOKEN`
+  reaches it; `HOME` does, which is how Claude Code finds its own login;
+- the tool channel is a Unix socket in a 0700 directory, needs the run's
+  256-bit token, and is gone when the run ends;
+- Claude Code's own error text (paths, keys) never reaches the phone;
+- a camera still reaches it as an image block;
+- the phone is told it is ready only when it is the owner's and signed in, and
+  a slow sign-in check never holds up the phone's refresh.
+
+The remaining check runs the real, unmodified `claude` binary against a fixture
+Messages API on loopback, with an empty `HOME` and a fixture key:
+
+```bash
+cd gateway && npm test -- tests/claude.test.ts   # with claude on PATH, or CLAUDE_CODE_BIN set
+```
+
+It checks the startup contract (only the governed tools, the bridge
+connected), then a full governed tool call through the fixture model. It skips
+inside a Claude Code cloud session that has a network, because there the CLI
+is bound to that session's own account and does not honour
+`ANTHROPIC_BASE_URL`. **What was run here**: Claude Code 2.1.282 offline
+(`unshare -rn`); the startup contract passed and the model half skipped for
+that reason. The full model loop against the real binary has not been run
+anywhere yet; it runs on an ordinary machine, such as the server.
+
+Removing `--tools ""` makes the real binary start with `Task`, `Bash`, `Edit`,
+`Read`, `NotebookEdit`, `CronCreate`, `SendMessage` and more; the test fails and
+the runtime's own startup check stops the run.
+
+To try the owner's real login once it is signed in, `bash deploy/doctor.sh
+--live` sends one tiny task. That uses a little of the plan, so plain
+`doctor.sh` never does.
+
+## Live browser and take-over
+
+`tests/browser.test.ts` (7 checks) against a stand-in Browser Use service, and
+18 end-to-end checks in a real browser (below). Established:
+
+- taking over pauses the employee at the provider **before** the phone says
+  you are in control; a refused pause leaves the employee in control and says
+  so, and a refused resume leaves the browser with you;
+- time with the owner does not count against the employee's 15 minutes, but a
+  take-over left open is ended after 45;
+- the live link is dropped from the record when the job ends or is stopped;
+- the phone only frames https pages from Browser Use's hosts (or ones an owner
+  adds with `BROWSER_LIVE_VIEW_HOSTS`, validated because they become part of
+  the page policy); any other live view is named on screen, not framed, and is
+  still kept for the glasses apps that already show it;
+- take-over and hand-back need the session and CSRF token, and another owner's
+  browser answers 404 with nothing sent to the provider;
+- in the real browser: the live page loads under the app's policy with no
+  violation; while the employee drives, taps on it go nowhere; once you are in
+  control, taps and typing reach it; the page is loaded **once** however often
+  the app re-renders; Stop cancels at the provider and lets go of the view.
+
+**Not verified against the live service**: Browser Use's documentation could
+not be reached from here. The v4 `pause` and `resume` paths follow the
+`cancel` path already in use (Browser Use documents pausing and resuming, but
+the exact v4 paths are unconfirmed), and serving the live view from
+`browser-use.com` or a subdomain is an assumption. If either is wrong, take-over fails safe (the
+employee keeps the browser and the phone says why) and the live view is named
+rather than shown. Whether a phone's keyboard opens inside Browser Use's viewer
+is up to that viewer.
+
 ## End-to-end
 
 Drives the built PWA in Chromium against a real gateway process -- real
@@ -95,13 +181,13 @@ phone takes over https.
 
 Covered: sign-in and session hardening; a governed task through the runtime;
 camera capture to evidence; honest degradation with no realtime credentials;
-the approval gate; cancellation; a task surviving the page being closed
+the approval gate; watching the employee browse and taking over; cancellation; a task surviving the page being closed
 mid-flight; isolation between two signed-in owners; idempotency, CSRF and
 sign-out.
 
 ```bash
 cd web && npm run build
-cd web && npm run e2e                                    # 90 checks
+cd web && npm run e2e                                    # 108 checks
 ```
 
 Needs `HERMES_CHECKOUT` and `HERMES_PYTHON` as above; it exits 2 with
@@ -119,12 +205,12 @@ as a pass.
 | Suite | Command | Result |
 |---|---|---|
 | Gateway typecheck | `npx tsc --noEmit` | clean |
-| Gateway tests | `npm test` | 97 passed, 0 failed, 0 skipped (11 files) |
-| Web typecheck + build | `npm run build` | clean; entry 34.8 kB, 11.7 kB gzipped |
-| Web tests | `npm test` | 92 passed (8 files) |
-| End-to-end | `npm run e2e` | 90 passed |
+| Gateway tests | `npm test` | 117 passed, 0 failed, 1 skipped (14 files); the skip is the real Claude Code test, for the reason above |
+| Web typecheck + build | `npm run build` | clean; entry 38.5 kB, 12.9 kB gzipped |
+| Web tests | `npm test` | 101 passed (9 files) |
+| End-to-end | `npm run e2e` | 108 passed |
 
-`npm run lint` in `gateway/` (prettier --check) fails on 30 files. It already
+`npm run lint` in `gateway/` (prettier --check) fails on 36 files. It already
 failed on 20 at the `a62fb16` checkpoint, before any of this work: the
 codebase's deliberate dense style does not match its own prettier config.
 Reformatting it is a separate decision, so new files follow the surrounding
@@ -155,13 +241,14 @@ Labels are the handoff's: **VERIFIED**, **BLOCKED ON OWNER CREDENTIAL**,
 | Adapter | Status |
 |---|---|
 | Hermes runtime | IMPLEMENTED + VERIFIED against the official runtime in a subprocess |
+| Claude Code (owner's subscription) | IMPLEMENTED + VERIFIED against a stand-in CLI through the real bridge and gateway (11 checks); startup contract VERIFIED with the real binary offline. Full model loop with the real binary: not yet run anywhere (runs on the server) |
 | Anthropic Managed Agents | IMPLEMENTED + VERIFIED end to end against a protocol fixture over loopback (`managed.test.ts`, 7 checks): provisioning shape, governed tool slate, approval gate, refusal, policy-answered confirmations, stale-action handling and cancellation. Live Anthropic account: BLOCKED ON OWNER CREDENTIAL |
 | Twilio SMS | Contract VERIFIED against fixtures; live account BLOCKED ON OWNER CREDENTIAL |
 | Retell voice | Contract VERIFIED against fixtures; live account BLOCKED ON OWNER CREDENTIAL |
 | Home Depot / Lowe's / Amazon / Walmart | Adapter, mapping, fulfillment and failure handling VERIFIED against fixtures; live accounts BLOCKED ON OWNER CREDENTIAL |
 | Local and specialty suppliers | VERIFIED — configured through `SUPPLIER_CONFIG_PATH` and exercised end to end against a live local endpoint |
 | eBay | Optional only; VERIFIED that it is not constructed unless `EBAY_ENABLED=true`, even with credentials present. Live account BLOCKED ON OWNER CREDENTIAL |
-| Browser Use | Approval gate, unconfigured refusal, cancel, cleanup and cross-owner safety VERIFIED; live account BLOCKED ON OWNER CREDENTIAL |
+| Browser Use | Approval gate, unconfigured refusal, cancel, cleanup and cross-owner safety VERIFIED; live view and take-over VERIFIED against a stand-in service in a real browser. The v4 pause/resume paths and live-view host are unconfirmed against the live service; live account BLOCKED ON OWNER CREDENTIAL |
 | MCP connectors | Config handling, https-only, owner scoping, credential requirement and the checkout-tool prohibition VERIFIED; a live connector BLOCKED ON OWNER CREDENTIAL |
 | Deployment packaging | IMPLEMENTED + VERIFIED locally — the gateway serves the built PWA, warns when it is missing, and `/health` stays up. The container image is NOT built here: this sandbox has a docker client but no daemon |
 
